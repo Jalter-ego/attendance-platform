@@ -1,11 +1,11 @@
 {
   "region": "us-east-2",
-  "image_version": "0.1.1",
-  "git_commit": "bf4813b",
+  "image_version": "0.1.2",
+  "git_commit": "e7dd515",
   "ami": {
-    "backend": "ami-00c95cac71a38d9e6",
-    "db": "ami-0fbcac983cdd5f83e",
-    "frontend": "ami-0930d3d76d257d63d",
-    "monitoring": "ami-02f2019a22c17074f"
+    "backend": "ami-01e1aefcf5197fcb1",
+    "db": "ami-099833519e020a8f0",
+    "frontend": "ami-0c711cdd70307f2ec",
+    "monitoring": "ami-0cc45b4b8374aba27"
   }
 }
