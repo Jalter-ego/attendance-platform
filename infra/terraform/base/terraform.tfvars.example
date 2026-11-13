@@ -1,0 +1,7 @@
+project_name = "attendance-platform"
+aws_region   = "us-east-2"
+vpc_cidr     = "10.90.0.0/16"
+
+# Pendiente: IPs publicas de las conexiones que ejecutaran Packer/abriran Grafana.
+# Una IP se escribe con /32. Con [] no hay acceso entrante SSH/Grafana.
+operator_cidrs = []
