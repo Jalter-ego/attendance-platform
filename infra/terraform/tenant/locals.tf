@@ -1,13 +1,14 @@
 locals {
   roles = toset(["frontend", "backend", "db"])
   # Los nombres IAM tienen limite de 64 caracteres; las etiquetas conservan el ID completo.
-  resource_prefix = "${substr(var.base.project_name, 0, 12)}-${substr(var.tenant_id, 0, 16)}-${var.env}-${substr(sha256("${var.base.project_name}/${var.tenant_id}/${var.env}"), 0, 8)}"
-  ssm_prefix      = "/tenants/${var.tenant_id}/${var.env}"
-  ssm_arn         = "arn:${data.aws_partition.current.partition}:ssm:${var.base.region}:${data.aws_caller_identity.current.account_id}:parameter${local.ssm_prefix}"
-  template_path   = var.cloud_init_template_path != null ? var.cloud_init_template_path : "${path.module}/../../cloud-init/user-data.yaml.tftpl"
-  template_exists = fileexists(local.template_path)
-  backup_policy   = "${var.backup.schedule}-${var.backup.retention_days}d"
-  backup_prefix   = "tenants/${var.tenant_id}/${var.env}"
+  resource_prefix   = "${substr(var.base.project_name, 0, 12)}-${substr(var.tenant_id, 0, 16)}-${var.env}-${substr(sha256("${var.base.project_name}/${var.tenant_id}/${var.env}"), 0, 8)}"
+  ssm_prefix        = "/tenants/${var.tenant_id}/${var.env}"
+  ssm_arn           = "arn:${data.aws_partition.current.partition}:ssm:${var.base.region}:${data.aws_caller_identity.current.account_id}:parameter${local.ssm_prefix}"
+  template_path     = var.cloud_init_template_path != null ? var.cloud_init_template_path : "${path.module}/../../cloud-init/user-data.yaml.tftpl"
+  template_exists   = fileexists(local.template_path)
+  backup_policy     = "${var.backup.schedule}-${var.backup.retention_days}d"
+  backup_policy_tag = "${var.base.project_name}:${local.backup_policy}"
+  backup_prefix     = "tenants/${var.tenant_id}/${var.env}"
 
   boot_common = {
     tenant_id        = var.tenant_id

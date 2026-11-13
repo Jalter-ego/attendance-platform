@@ -65,7 +65,7 @@ Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El respons
 - Si P2/P6 ejecutan una copia aislada del módulo o lo instalan mediante `source` absoluto, deben pasar `cloud_init_template_path` con una ruta absoluta al archivo del checkout. El valor por defecto requiere que se conserve la estructura del monorepo.
 - Orden: EBS → DB → adjuntar disco → backend con IP privada de DB → frontend con IP privada de backend. El frontend usa nginx como proxy; API/DB no tienen IP pública. No se considera listo un tenant hasta superar los health checks de P4.
 - Los tres IDs de AMI se fijan por despliegue; se validan cuenta/región, estado disponible, arquitectura x86_64 y etiqueta `Role`. El catálogo inicial debe usar los tamaños t3 admitidos por el módulo. P3 debe confirmar con P1/P4 los nombres y tamaños antes de integrar el PR.
-- Integración actual: no usar AMIs 0.1.0 por el fallo de inventario Ansible reportado por P2 (backend con 502). Esperar los IDs concretos y la validación de las AMIs 0.1.1 reconstruidas antes de la prueba conjunta.
+- Integración actual: P3 ya está en `master`; `infra/packer/ami-ids.json` registra las cuatro AMIs 0.1.2, verificadas disponibles en la cuenta del equipo y `us-east-2`. El inventario de arranque usa únicamente `localhost` y la prueba del módulo con la plantilla integrada pasó. No usar AMIs 0.1.0; queda pendiente la prueba funcional conjunta con los IDs actuales.
 
 ## Puertos que deben conservarse
 
@@ -81,6 +81,8 @@ Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El respons
 | Prometheus | 9090 | Grafana y administración autorizada |
 | Grafana | 3000 | Administración autorizada |
 
-Health del backend actual: `/core/api/v1/health`. La ruta de métricas y su acceso los coordinan P4/P5. La base mantiene SSH/Grafana cerrados por defecto. El código nuevo añade un endpoint SSM de Parameter Store y los SG por tenant; faltan su aplicación/integración real. No se incluyen todavía Session Manager/Run Command ni salida a Internet para backend/BD.
+Health del backend actual: `/core/api/v1/health`. La ruta de métricas y su acceso los coordinan P4/P5. La base mantiene SSH/Grafana cerrados por defecto y el endpoint SSM de Parameter Store ya está creado. Los SG por tenant se crean al aplicar su módulo; falta la prueba funcional de un tenant. El PR #5 añade acceso S3 y canales/permisos del agente para respaldos vía Run Command en DB; aplicar esa ampliación y probarla con una AMI nueva sigue pendiente. Backend/BD continúan sin salida general a Internet.
+
+Para la extensión de respaldos, P2/P4/P6 pasan `backup={schedule,retention_days}` y `base.backups_bucket`; vacío mantiene la función desactivada. La etiqueta DLM del volumen y del selector es `BackupPolicy=<project_name>:<schedule>-<retention_days>d`. No usar varias etiquetas de destino para simular un AND: DLM las combina con OR. Las AMIs 0.1.2 no contienen los scripts nuevos; P3 prevé la 0.2.0 y una prueba de restauración antes de activar esta función. El bucket de respaldos es distinto del bucket del tfstate.
 
 Referencias: [S3 backend de Terraform](https://developer.hashicorp.com/terraform/language/backend/s3), [S3 backend de OpenTofu](https://opentofu.org/docs/language/settings/backends/s3/), [bloqueo S3 en OpenTofu 1.10](https://opentofu.org/docs/v1.10/intro/whats-new/).
