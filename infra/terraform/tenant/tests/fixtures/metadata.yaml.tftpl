@@ -1,0 +1,8 @@
+# Fixture de pruebas: solo verifica los datos del contrato. No arranca Attendance.
+${jsonencode({
+  role = role, tenant_id = tenant_id, env = env, plan = plan, region = region,
+  ssm_prefix = ssm_prefix, vpc_cidr = vpc_cidr, db_host = db_host,
+  backend_host = backend_host, db_volume_id = db_volume_id,
+  institution_name = institution_name, timezone = timezone,
+  admin_email = admin_email, limits = limits
+})}

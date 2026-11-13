@@ -1,6 +1,14 @@
 mock_provider "aws" {
   override_during = plan
 
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "123456789012" }
+  }
+
   mock_data "aws_availability_zones" {
     defaults = {
       names = ["us-east-2a"]
@@ -107,6 +115,30 @@ run "restricted_operator_access" {
       aws_vpc_security_group_ingress_rule.grafana["198.51.100.10/32"].cidr_ipv4 == "198.51.100.10/32"
     )
     error_message = "SSH y Grafana solo deben abrirse para la conexion indicada."
+  }
+}
+
+run "private_parameter_store" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_vpc_endpoint.ssm.vpc_id == aws_vpc.platform.id &&
+      aws_vpc_endpoint.ssm.service_name == "com.amazonaws.us-east-2.ssm" &&
+      aws_vpc_endpoint.ssm.private_dns_enabled &&
+      toset(aws_vpc_endpoint.ssm.subnet_ids) == toset([aws_subnet.private.id]) &&
+      aws_vpc_security_group_ingress_rule.ssm.cidr_ipv4 == var.vpc_cidr &&
+      aws_vpc_security_group_ingress_rule.ssm.from_port == 443
+    )
+    error_message = "Parameter Store debe alcanzarse por HTTPS privado desde la VPC."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_vpc_endpoint.ssm.policy).Statement[0].Resource == "arn:aws:ssm:us-east-2:123456789012:parameter/tenants/*" &&
+      toset(jsondecode(aws_vpc_endpoint.ssm.policy).Statement[0].Action) == toset(["ssm:GetParametersByPath", "ssm:GetParameters"])
+    )
+    error_message = "El endpoint debe permitir lectura de parametros de tenants, sin acceso administrativo."
   }
 }
 
