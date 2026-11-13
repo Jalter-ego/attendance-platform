@@ -1,0 +1,34 @@
+---
+# Primer arranque de una VM de tenant. Lo ejecuta /usr/local/sbin/attendance-boot (cloud-init)
+# DENTRO de la VM, con:
+#   -e @/etc/attendance/tenant.json   identidad del tenant (role, tenant_id, env, db_host, ...)
+#   -e @<secretos de SSM>             db_password, jwt_secret, admin_password
+# Es idempotente: se puede volver a correr con `sudo attendance-boot`.
+
+- name: Configurar la VM para su tenant
+  hosts: all
+  connection: local
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Validar la identidad del tenant
+      ansible.builtin.assert:
+        that:
+          - vm_role in ['frontend', 'backend', 'db', 'monitoring']
+          # Mismas reglas que docs/contratos-integracion.md (P1).
+          - tenant_id is match('^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$')
+          - env in ['test', 'prod']
+        fail_msg: "tenant.json inválido (vm_role={{ vm_role | default('?') }}, tenant_id={{ tenant_id | default('?') }})"
+
+    - name: Nombre del host = tenant-env-rol (se ve así en Netdata y en los logs)
+      ansible.builtin.hostname:
+        name: "{{ tenant_id }}-{{ env }}-{{ vm_role }}"
+
+  roles:
+    - role: boot_db
+      when: vm_role == 'db'
+    - role: boot_backend
+      when: vm_role == 'backend'
+    - role: boot_frontend
+      when: vm_role == 'frontend'

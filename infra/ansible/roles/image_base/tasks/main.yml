@@ -1,0 +1,45 @@
+---
+- name: Paquetes base
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, unzip, jq, git, xz-utils, python3, rsync, acl]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Instalador de AWS CLI v2 (cloud-init lo usa para leer SSM; backups lo usan para S3)
+  ansible.builtin.unarchive:
+    src: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+    dest: /tmp
+    remote_src: true
+    creates: /usr/local/bin/aws
+
+- name: Instalar AWS CLI v2
+  ansible.builtin.command:
+    cmd: /tmp/aws/install --update
+    creates: /usr/local/bin/aws
+
+- name: Carpetas de la app
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.owner | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ attendance_root }}", mode: "0755" }
+    - { path: "{{ attendance_etc }}", mode: "0750" }
+    - { path: "{{ attendance_state }}", mode: "0755" }
+
+# boot.yml corre desde aquí en el primer arranque (cloud-init -> ansible-playbook -c local).
+- name: Copiar los playbooks de Ansible dentro de la AMI
+  ansible.builtin.command:
+    argv: [rsync, -a, --delete, --exclude=*.retry, "{{ playbook_dir }}/", "{{ attendance_ansible_dir }}/"]
+  changed_when: true
+
+- name: Solo root lee los playbooks copiados
+  ansible.builtin.file:
+    path: "{{ attendance_ansible_dir }}"
+    owner: root
+    group: root
+    mode: "u=rwX,go=rX"
+    recurse: true

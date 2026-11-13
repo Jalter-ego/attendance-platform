@@ -1,0 +1,38 @@
+# {{ ansible_managed }}
+# La app (o cualquier proceso) puede enviar OTLP a localhost:4317/4318; el collector
+# también toma métricas del host. Todo se expone en :8889 para que Prometheus lo scrapee.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      cpu: {}
+      memory: {}
+      disk: {}
+      filesystem: {}
+      network: {}
+      load: {}
+
+processors:
+  batch: {}
+  resourcedetection:
+    detectors: [env, ec2]
+    timeout: 5s
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, hostmetrics]
+      processors: [resourcedetection, batch]
+      exporters: [prometheus]

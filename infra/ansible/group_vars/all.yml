@@ -1,0 +1,32 @@
+---
+# Valores comunes a image.yml (Packer) y boot.yml (cloud-init).
+
+attendance_root: /opt/attendance
+attendance_ansible_dir: /opt/attendance/ansible     # copia de esta carpeta dentro de cada AMI
+attendance_etc: /etc/attendance                     # tenant.env, backend.env, image.json
+attendance_state: /var/lib/attendance               # marcas de "listo"
+
+# Versiones fijas (se registran en /etc/attendance/image.json -> RF-13).
+node_version: "24.15.0"
+pnpm_version: "10.11.0"
+node_exporter_version: "1.8.2"
+process_exporter_version: "0.8.3"
+otelcol_version: "0.111.0"
+prometheus_version: "2.54.1"
+
+# App de asistencia (las sobreescribe Packer con -e).
+backend_repo: https://github.com/Jalter-ego/attendance-core.git
+backend_ref: master
+frontend_repo: https://github.com/Jalter-ego/attendance-web.git
+frontend_ref: master
+image_version: "0.0.0"
+git_commit: unknown
+
+backend_port: 5000
+backend_api_path: /core/api/v1
+postgres_version: "16"   # el que trae Ubuntu 24.04
+
+# Base de datos de cada tenant (una por tenant, en su propia VM).
+db_name: attendance
+db_user: attendance
+db_port: 5432

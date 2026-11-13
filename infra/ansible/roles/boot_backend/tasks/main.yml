@@ -1,0 +1,72 @@
+---
+# Conecta la API horneada en la AMI con la BD privada de SU tenant y la arranca.
+
+- name: Validar secretos
+  ansible.builtin.assert:
+    that:
+      - db_password is defined and db_password | length >= 16
+      - jwt_secret is defined and jwt_secret | length >= 32
+    fail_msg: "Faltan secretos en SSM ({{ ssm_prefix }}/db_password, jwt_secret)"
+  no_log: true
+
+- name: Escribir /etc/attendance/backend.env
+  ansible.builtin.template:
+    src: backend.env.j2
+    dest: "{{ attendance_etc }}/backend.env"
+    owner: root
+    group: attendance
+    mode: "0640"
+  no_log: true
+  register: backend_env_file
+
+- name: Esperar a la BD del tenant
+  ansible.builtin.wait_for:
+    host: "{{ db_host }}"
+    port: "{{ db_port }}"
+    timeout: 600
+
+# --env development: migrations-config.js de attendance-core solo define "development";
+# con NODE_ENV=production (backend.env) sequelize-cli falla con "Dialect needs to be
+# explicitly supplied". Los valores reales salen igual de las variables DB_WRITE_*.
+# Sin no_log: el comando no lleva secretos (se cargan del archivo) y su salida no los
+# imprime, así el error queda visible en la consola de la VM y en los logs de la plataforma.
+- name: Migraciones de la BD (idempotentes)
+  ansible.builtin.shell: |
+    set -ea
+    . {{ attendance_etc }}/backend.env
+    ./node_modules/.bin/sequelize-cli db:migrate --env development
+  args:
+    chdir: "{{ attendance_root }}/backend-current"
+  register: migrate
+  changed_when: "'No migrations were executed' not in migrate.stdout"
+
+- name: Crear el administrador inicial del tenant (si el backend trae el script)
+  ansible.builtin.shell: |
+    set -ea
+    . {{ attendance_etc }}/backend.env
+    node scripts/bootstrap.cjs
+  args:
+    chdir: "{{ attendance_root }}/backend-current"
+    removes: "{{ attendance_root }}/backend-current/scripts/bootstrap.cjs"
+  environment:
+    BOOTSTRAP_ADMIN_NAME: "Administrador {{ institution_name }}"
+    BOOTSTRAP_ADMIN_EMAIL: "{{ admin_email }}"
+    BOOTSTRAP_ADMIN_PASSWORD: "{{ admin_password | default('') }}"
+  when: admin_password is defined
+  no_log: true
+  changed_when: true
+
+- name: Arrancar la API
+  ansible.builtin.systemd_service:
+    name: attendance-backend
+    state: "{{ 'restarted' if backend_env_file.changed else 'started' }}"
+    enabled: true
+
+- name: Esperar a que la API responda
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ backend_port }}{{ backend_api_path }}"
+    status_code: [200, 401, 404]
+  register: api
+  until: api.status in [200, 401, 404]
+  retries: 45
+  delay: 2
