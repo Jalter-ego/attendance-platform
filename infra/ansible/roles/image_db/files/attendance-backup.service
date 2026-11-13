@@ -1,0 +1,12 @@
+[Unit]
+Description=Respaldo programado de la BD del tenant (pg_dump -> S3)
+After=postgresql.service network-online.target
+Wants=network-online.target
+# Sin configuración (tenant sin bucket de respaldos) no hace nada.
+ConditionPathExists=/etc/attendance/backup.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/attendance-backup scheduled
+Nice=10
+IOSchedulingClass=idle

@@ -11,3 +11,28 @@
     name: postgresql
     state: stopped
     enabled: false
+
+# Respaldos (B5/B6): los scripts vienen en la AMI; boot.yml los configura por tenant.
+- name: Scripts de respaldo y restauración
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/sbin/{{ item }}"
+    owner: root
+    group: root
+    mode: "0750"
+  loop: [attendance-backup, attendance-restore]
+
+- name: Servicio del respaldo programado (el timer lo crea boot.yml según el plan)
+  ansible.builtin.copy:
+    src: attendance-backup.service
+    dest: /etc/systemd/system/attendance-backup.service
+    owner: root
+    group: root
+    mode: "0644"
+
+# El agente SSM viene en la AMI de Ubuntu (snap). Lo usa el worker para Run Command.
+- name: Agente SSM habilitado
+  ansible.builtin.command: snap services amazon-ssm-agent
+  register: ssm_agent
+  changed_when: false
+  failed_when: "'enabled' not in ssm_agent.stdout"

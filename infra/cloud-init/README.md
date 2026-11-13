@@ -39,6 +39,9 @@ user_data = templatefile("${path.module}/../../cloud-init/user-data.yaml.tftpl",
   timezone         = var.timezone                    # p. ej. America/La_Paz
   admin_email      = var.contact_email
   limits           = var.limits                      # mapa: max_students, max_teachers, ...
+  backup_bucket         = var.base.backups_bucket    # "" = sin respaldos (lo usa db)
+  backup_schedule       = "weekly"                   # weekly | daily (plan)
+  backup_retention_days = 28                         # 28 | 14 | 30 (plan)
 })
 ```
 

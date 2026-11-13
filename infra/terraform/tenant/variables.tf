@@ -9,6 +9,8 @@ variable "base" {
     private_subnet_id            = string
     monitoring_security_group_id = string
     ssm_endpoint_id              = string
+    # Opcional para no romper consumidores anteriores; "" deja los respaldos desactivados.
+    backups_bucket = optional(string, "")
   })
 }
 
@@ -124,4 +126,18 @@ variable "cloud_init_template_path" {
   type        = string
   default     = null
   description = "Ruta de la plantilla de P3, preferiblemente absoluta al consumir el modulo desde otra ubicacion. null usa ../../cloud-init/user-data.yaml.tftpl desde path.module; una ruta relativa explicita parte de la raiz de ejecucion de Terraform."
+}
+
+variable "backup" {
+  description = "Respaldo del plan (catalogo de P4): frecuencia y dias de retencion. Ver infra/terraform/base/backups.tf."
+  type = object({
+    schedule       = string
+    retention_days = number
+  })
+  default = { schedule = "weekly", retention_days = 28 }
+
+  validation {
+    condition     = contains(["weekly-28", "daily-14", "daily-30"], "${var.backup.schedule}-${var.backup.retention_days}")
+    error_message = "Combinaciones admitidas: weekly/28 (Basico), daily/14 (Estandar), daily/30 (Avanzado)."
+  }
 }

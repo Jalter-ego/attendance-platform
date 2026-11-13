@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Restaura la BD del tenant desde un dump en S3 (lo crea attendance-backup).
+#
+# Uso: attendance-restore <backup_id | latest> [--no-safety-backup]
+#   backup_id : p. ej. 20261114T030000Z-scheduled (ver tenant-backup.sh list)
+#   latest    : el respaldo más reciente que no sea una copia pre-restore
+#
+# Antes de restaurar hace una copia "pre-restore" (retención 7 días) para poder deshacer.
+# Verifica el sha256 del dump, cierra las conexiones del backend (se reconecta solo) y
+# restaura en una sola transacción: si algo falla, la BD queda como estaba.
+# La última línea de la salida es JSON: {"restored":"...","safety_backup":"...","restored_at":"..."}
+set -euo pipefail
+umask 077
+
+ENV_FILE=/etc/attendance/backup.env
+[ -r "$ENV_FILE" ] || { echo "ERROR: respaldos no configurados en esta VM (falta $ENV_FILE)" >&2; exit 3; }
+# shellcheck source=/dev/null
+. "$ENV_FILE"   # BACKUP_BUCKET BACKUP_PREFIX BACKUP_RETENTION_DAYS AWS_REGION DB_NAME
+
+TARGET="${1:-}"
+SAFETY=1
+[ "${2:-}" = "--no-safety-backup" ] && SAFETY=0
+[ -n "$TARGET" ] || { echo "Uso: attendance-restore <backup_id | latest> [--no-safety-backup]" >&2; exit 2; }
+
+exec 9>/run/attendance-db-backup.lock
+flock -n 9 || { echo "ERROR: ya hay un respaldo o una restauración en curso" >&2; exit 4; }
+
+if [ "$TARGET" = latest ]; then
+  KEY=$(aws s3api list-objects-v2 --region "$AWS_REGION" --bucket "$BACKUP_BUCKET" \
+    --prefix "$BACKUP_PREFIX/db/" \
+    --query "sort_by(Contents[?!contains(Key, '-pre-restore')], &Key)[-1].Key" --output text)
+  [ -n "$KEY" ] && [ "$KEY" != None ] || { echo "ERROR: no hay respaldos en $BACKUP_PREFIX/db/" >&2; exit 5; }
+else
+  [[ "$TARGET" =~ ^[0-9]{8}T[0-9]{6}Z-(manual|scheduled|pre-restore)$ ]] \
+    || { echo "ERROR: backup_id inválido '$TARGET'" >&2; exit 2; }
+  KEY="$BACKUP_PREFIX/db/$TARGET.dump"
+fi
+BACKUP_ID=$(basename "$KEY" .dump)
+
+EXPECTED=$(aws s3api head-object --region "$AWS_REGION" --bucket "$BACKUP_BUCKET" --key "$KEY" \
+  --query 'Metadata.sha256' --output text 2>/dev/null) \
+  || { echo "ERROR: no existe el respaldo $BACKUP_ID" >&2; exit 5; }
+
+SAFETY_ID=""
+if [ "$SAFETY" = 1 ]; then
+  echo "== copia previa (pre-restore) por si hay que deshacer"
+  SAFETY_JSON=$(ATTENDANCE_DB_LOCK_HELD=1 /usr/local/sbin/attendance-backup pre-restore | tail -n 1)
+  SAFETY_ID=$(sed -E 's/.*"backup_id":"([^"]+)".*/\1/' <<<"$SAFETY_JSON")
+fi
+
+WORK=/var/lib/postgresql/.attendance-backup
+install -d -m 0700 -o postgres -g postgres "$WORK"
+FILE="$WORK/restore-$BACKUP_ID.dump"
+trap 'rm -f "$FILE"' EXIT
+
+echo "== descargando s3://$BACKUP_BUCKET/$KEY"
+aws s3api get-object --region "$AWS_REGION" --bucket "$BACKUP_BUCKET" --key "$KEY" "$FILE" >/dev/null
+chown postgres:postgres "$FILE"
+ACTUAL=$(sha256sum "$FILE" | cut -d' ' -f1)
+if [ -n "$EXPECTED" ] && [ "$EXPECTED" != None ] && [ "$EXPECTED" != "$ACTUAL" ]; then
+  echo "ERROR: el sha256 no coincide (esperado $EXPECTED, obtenido $ACTUAL); no se restaura" >&2
+  exit 6
+fi
+
+echo "== cerrando conexiones a '$DB_NAME' (el backend se reconecta solo)"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -qAt -d postgres -c \
+  "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname = '$DB_NAME' AND pid <> pg_backend_pid();" >/dev/null
+
+echo "== restaurando $BACKUP_ID (una sola transacción)"
+runuser -u postgres -- pg_restore --clean --if-exists --single-transaction --exit-on-error \
+  --dbname="$DB_NAME" "$FILE"
+
+echo "== restauración lista: $BACKUP_ID"
+printf '{"restored":"%s","safety_backup":"%s","restored_at":"%s"}\n' \
+  "$BACKUP_ID" "$SAFETY_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

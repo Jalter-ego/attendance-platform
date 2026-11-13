@@ -105,3 +105,59 @@
     DB_PASSWORD: "{{ db_password }}"
   no_log: true
   changed_when: true
+
+# ---- Respaldos (B5/B6) ----------------------------------------------------------
+- name: Respaldos del tenant
+  when: backup_bucket | default('') | length > 0
+  block:
+    - name: Validar la política de respaldo del plan
+      ansible.builtin.assert:
+        that:
+          - backup_schedule in ['weekly', 'daily']
+          - (backup_retention_days | int) in [14, 28, 30]
+        fail_msg: "Política de respaldo inválida: {{ backup_schedule | default('?') }}/{{ backup_retention_days | default('?') }}"
+
+    - name: Configuración de respaldos (sin secretos)
+      ansible.builtin.copy:
+        dest: "{{ attendance_etc }}/backup.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # {{ ansible_managed }}
+          BACKUP_BUCKET={{ backup_bucket }}
+          BACKUP_PREFIX=tenants/{{ tenant_id }}/{{ env }}
+          BACKUP_RETENTION_DAYS={{ backup_retention_days | int }}
+          AWS_REGION={{ region }}
+          DB_NAME={{ db_name }}
+
+    # Hora local de la VM (= zona del tenant): 03:00. weekly = domingo.
+    - name: Timer del respaldo programado ({{ backup_schedule }})
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/attendance-backup.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Respaldo {{ backup_schedule }} de la BD del tenant {{ tenant_id }}/{{ env }}
+
+          [Timer]
+          OnCalendar={{ 'Sun *-*-* 03:00:00' if backup_schedule == 'weekly' else '*-*-* 03:00:00' }}
+          RandomizedDelaySec=15min
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Activar el timer
+      ansible.builtin.systemd_service:
+        name: attendance-backup.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+- name: Sin bucket de respaldos
+  ansible.builtin.debug:
+    msg: "AVISO: backup_bucket vacío; este tenant no tiene respaldos programados."
+  when: backup_bucket | default('') | length == 0

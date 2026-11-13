@@ -36,3 +36,12 @@ output "instance_role_arns" {
 output "ami_ids" {
   value = { for role, image in data.aws_ami.role : role => image.id }
 }
+
+output "backup" {
+  description = "Donde quedan los respaldos de este tenant (dumps en S3 y politica DLM de snapshots)."
+  value = {
+    bucket = var.base.backups_bucket
+    prefix = local.backup_prefix
+    policy = var.base.backups_bucket != "" ? local.backup_policy : null
+  }
+}
