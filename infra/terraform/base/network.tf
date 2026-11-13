@@ -51,8 +51,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# En este bloque la subred privada solo tiene la ruta local de la VPC.
-# Se completará su acceso a SSM antes de desplegar backend/BD privados.
+# La subred privada solo tiene la ruta local. SSM se alcanza mediante PrivateLink.
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.platform.id
 
