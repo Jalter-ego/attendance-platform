@@ -19,7 +19,7 @@ Attendance sigue siendo una aplicación de una sola institución. `tenant_id` id
 
 [tenant.example.json](examples/tenant.example.json) muestra la entrada del despliegue. P6 valida la solicitud y P2 transforma estos datos en las variables o parámetros de cada motor. Los IDs de AMI son ficticios; P3 entregará los reales y su versión. Los tamaños y el disco son ejemplos, pendientes de confirmar por P4.
 
-P1 entregará los IDs de VPC, subredes y SG desde `infra/terraform/base`, mediante `terraform output -json integration`. El contrato incluye `region`, `availability_zone`, `vpc_id`, `public_subnet_id`, `private_subnet_id`, `packer_security_group_id`, `monitoring_security_group_id` y `monitoring_instance_profile_name`. Son configuración interna del worker, no valores que el usuario de la plataforma deba escribir en el formulario.
+P1 entrega los IDs de VPC, subredes y SG desde `infra/terraform/base`, mediante `terraform output -json integration`. El contrato incluye `region`, `availability_zone`, `vpc_id`, `public_subnet_id`, `private_subnet_id`, `packer_security_group_id`, `monitoring_security_group_id`, `monitoring_instance_profile_name` y, en esta actualización, `ssm_endpoint_id`. Hay que aplicar el nuevo endpoint y volver a exportar el output. Son configuración interna del worker, no valores que el usuario de la plataforma deba escribir en el formulario.
 
 El resultado de un adaptador debe contener:
 
@@ -61,7 +61,9 @@ Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El respons
 - P6 genera los secretos y los escribe como `SecureString` mediante AWS SDK/CLI; el IaC recibe nombres/prefijos, no contraseñas ni valores del JWT.
 - P1 creará perfiles IAM limitados al prefijo del cliente. P3/P4 leerán los parámetros al arrancar y escribirán los archivos de entorno con permisos restringidos.
 - `INSTITUTION_NAME` e `INSTITUTION_TIMEZONE` configuran Attendance. Los secretos del backend y PostgreSQL nunca se escriben en `config.json` del frontend.
-- La red privada del backend/BD y el proxy HTTP se acordarán al implementar C1. No se considera listo un tenant hasta superar los health checks de P4.
+- `infra/terraform/tenant` consume la plantilla `infra/cloud-init/user-data.yaml.tftpl` del PR de P3: `role`, `tenant_id`, `env`, `plan`, `region`, `ssm_prefix`, `vpc_cidr`, `db_host`, `backend_host`, `db_volume_id`, `institution_name`, `timezone`, `admin_email`, `limits`. No se copia ni se sustituye esa plantilla desde P1.
+- Orden: EBS → DB → adjuntar disco → backend con IP privada de DB → frontend con IP privada de backend. El frontend usa nginx como proxy; API/DB no tienen IP pública. No se considera listo un tenant hasta superar los health checks de P4.
+- Los tres IDs de AMI se fijan por despliegue; se validan cuenta/región, estado disponible, arquitectura x86_64 y etiqueta `Role`. El catálogo inicial debe usar los tamaños t3 admitidos por el módulo. P3 debe confirmar con P1/P4 los nombres y tamaños antes de integrar el PR.
 
 ## Puertos que deben conservarse
 
@@ -77,6 +79,6 @@ Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El respons
 | Prometheus | 9090 | Grafana y administración autorizada |
 | Grafana | 3000 | Administración autorizada |
 
-Health del backend actual: `/core/api/v1/health`. La ruta de métricas y su acceso los coordinan P4/P5. En la base ya están definidos los SG de Packer/monitoreo con acceso entrante cerrado por defecto; los SG por tenant y la conectividad privada a SSM siguen pendientes de A4/C1.
+Health del backend actual: `/core/api/v1/health`. La ruta de métricas y su acceso los coordinan P4/P5. La base mantiene SSH/Grafana cerrados por defecto. El código nuevo añade un endpoint SSM de Parameter Store y los SG por tenant; faltan su aplicación/integración real. No se incluyen todavía Session Manager/Run Command ni salida a Internet para backend/BD.
 
 Referencias: [S3 backend de Terraform](https://developer.hashicorp.com/terraform/language/backend/s3), [S3 backend de OpenTofu](https://opentofu.org/docs/language/settings/backends/s3/), [bloqueo S3 en OpenTofu 1.10](https://opentofu.org/docs/v1.10/intro/whats-new/).
