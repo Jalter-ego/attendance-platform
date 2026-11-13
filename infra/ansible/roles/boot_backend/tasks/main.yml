@@ -25,16 +25,20 @@
     port: "{{ db_port }}"
     timeout: 600
 
+# --env development: migrations-config.js de attendance-core solo define "development";
+# con NODE_ENV=production (backend.env) sequelize-cli falla con "Dialect needs to be
+# explicitly supplied". Los valores reales salen igual de las variables DB_WRITE_*.
+# Sin no_log: el comando no lleva secretos (se cargan del archivo) y su salida no los
+# imprime, así el error queda visible en la consola de la VM y en los logs de la plataforma.
 - name: Migraciones de la BD (idempotentes)
   ansible.builtin.shell: |
     set -ea
     . {{ attendance_etc }}/backend.env
-    ./node_modules/.bin/sequelize-cli db:migrate
+    ./node_modules/.bin/sequelize-cli db:migrate --env development
   args:
     chdir: "{{ attendance_root }}/backend-current"
   register: migrate
   changed_when: "'No migrations were executed' not in migrate.stdout"
-  no_log: "{{ not (debug_boot | default(false)) }}"
 
 - name: Crear el administrador inicial del tenant (si el backend trae el script)
   ansible.builtin.shell: |
