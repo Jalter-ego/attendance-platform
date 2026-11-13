@@ -4,7 +4,11 @@ resource "aws_ebs_volume" "db" {
   type              = "gp3"
   encrypted         = true
 
-  tags = { Name = "${local.resource_prefix}-pgdata", Role = "db" }
+  # BackupPolicy activa el snapshot programado de DLM (base/backups.tf).
+  tags = merge(
+    { Name = "${local.resource_prefix}-pgdata", Role = "db" },
+    var.base.backups_bucket != "" ? { BackupPolicy = local.backup_policy } : {},
+  )
 }
 
 resource "aws_instance" "db" {

@@ -6,6 +6,8 @@ locals {
   ssm_arn         = "arn:${data.aws_partition.current.partition}:ssm:${var.base.region}:${data.aws_caller_identity.current.account_id}:parameter${local.ssm_prefix}"
   template_path   = var.cloud_init_template_path != null ? var.cloud_init_template_path : "${path.module}/../../cloud-init/user-data.yaml.tftpl"
   template_exists = fileexists(local.template_path)
+  backup_policy   = "${var.backup.schedule}-${var.backup.retention_days}d"
+  backup_prefix   = "tenants/${var.tenant_id}/${var.env}"
 
   boot_common = {
     tenant_id        = var.tenant_id
@@ -21,6 +23,10 @@ locals {
     timezone         = var.timezone
     admin_email      = var.contact_email
     limits           = var.limits
+    # Respaldos (P3): la VM db sube sus dumps a tenants/<id>/<env>/db/ en este bucket.
+    backup_bucket         = var.base.backups_bucket
+    backup_schedule       = var.backup.schedule
+    backup_retention_days = var.backup.retention_days
   }
 }
 

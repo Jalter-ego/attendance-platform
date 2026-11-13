@@ -11,6 +11,7 @@ output "integration" {
     monitoring_security_group_id     = aws_security_group.monitoring.id
     monitoring_instance_profile_name = aws_iam_instance_profile.monitoring.name
     ssm_endpoint_id                  = aws_vpc_endpoint.ssm.id
+    backups_bucket                   = aws_s3_bucket.backups.id
   }
 
   depends_on = [
@@ -18,5 +19,7 @@ output "integration" {
     aws_route_table_association.public,
     aws_route_table_association.private,
     aws_iam_role_policy.monitoring_discovery,
+    aws_vpc_endpoint.s3,
+    aws_vpc_endpoint.ssm_agent,
   ]
 }

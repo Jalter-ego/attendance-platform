@@ -27,12 +27,30 @@ resource "aws_vpc_endpoint" "ssm" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = "*"
-      Action    = ["ssm:GetParametersByPath", "ssm:GetParameters"]
-      Resource  = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/tenants/*"
-    }]
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["ssm:GetParametersByPath", "ssm:GetParameters"]
+        Resource  = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/tenants/*"
+      },
+      {
+        # Registro y Run Command del agente SSM de la VM db (respaldos, backups.tf).
+        # Sin GetParameter(s) aquí: los secretos siguen limitados al bloque anterior.
+        Sid       = "SsmAgentRunCommand"
+        Effect    = "Allow"
+        Principal = "*"
+        Action = [
+          "ssm:UpdateInstanceInformation",
+          "ssm:ListInstanceAssociations",
+          "ssm:DescribeAssociation",
+          "ssm:UpdateInstanceAssociationStatus",
+          "ssm:GetDocument",
+          "ssm:DescribeDocument",
+        ]
+        Resource = "*"
+      },
+    ]
   })
 
   tags = { Name = "${var.project_name}-ssm", Role = "ssm-endpoint" }

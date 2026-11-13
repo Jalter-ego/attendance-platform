@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Respaldo lógico de la BD del tenant: pg_dump -> S3 (tenants/<id>/<env>/db/<backup_id>.dump).
+#
+# Uso: attendance-backup [manual|scheduled|pre-restore]      (por defecto: manual)
+#   - manual      : lo pide el worker de la plataforma (SSM Run Command)
+#   - scheduled   : timer systemd según el plan (attendance-backup.timer)
+#   - pre-restore : copia de seguridad automática antes de un restore (retención 7 días)
+#
+# La última línea de la salida es JSON para el worker:
+#   {"backup_id":"...","key":"...","bytes":N,"sha256":"...","label":"...","retention_days":N,"created_at":"..."}
+# La configuración la escribe boot.yml en /etc/attendance/backup.env (sin secretos).
+set -euo pipefail
+umask 077
+
+ENV_FILE=/etc/attendance/backup.env
+[ -r "$ENV_FILE" ] || { echo "ERROR: respaldos no configurados en esta VM (falta $ENV_FILE)" >&2; exit 3; }
+# shellcheck source=/dev/null
+. "$ENV_FILE"   # BACKUP_BUCKET BACKUP_PREFIX BACKUP_RETENTION_DAYS AWS_REGION DB_NAME
+
+LABEL="${1:-manual}"
+case "$LABEL" in
+  manual | scheduled) RETENTION="$BACKUP_RETENTION_DAYS" ;;
+  pre-restore) RETENTION=7 ;;
+  *) echo "ERROR: etiqueta inválida '$LABEL' (manual | scheduled | pre-restore)" >&2; exit 2 ;;
+esac
+
+# Un solo respaldo/restauración a la vez. attendance-restore ya tiene el candado cuando
+# pide la copia previa, por eso pasa ATTENDANCE_DB_LOCK_HELD=1.
+if [ "${ATTENDANCE_DB_LOCK_HELD:-0}" != 1 ]; then
+  exec 9>/run/attendance-db-backup.lock
+  flock -n 9 || { echo "ERROR: ya hay un respaldo o una restauración en curso" >&2; exit 4; }
+fi
+
+CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)-$LABEL"
+KEY="$BACKUP_PREFIX/db/$BACKUP_ID.dump"
+
+# Archivo temporal en el disco EBS de datos (no llena el disco raíz).
+WORK=/var/lib/postgresql/.attendance-backup
+install -d -m 0700 -o postgres -g postgres "$WORK"
+FILE="$WORK/$BACKUP_ID.dump"
+trap 'rm -f "$FILE"' EXIT
+
+echo "== pg_dump de la base '$DB_NAME'"
+runuser -u postgres -- pg_dump --format=custom --compress=6 --file="$FILE" "$DB_NAME"
+BYTES=$(stat -c %s "$FILE")
+SHA256=$(sha256sum "$FILE" | cut -d' ' -f1)
+
+echo "== subiendo a s3://$BACKUP_BUCKET/$KEY ($BYTES bytes, retención $RETENTION días)"
+aws s3api put-object --region "$AWS_REGION" \
+  --bucket "$BACKUP_BUCKET" --key "$KEY" --body "$FILE" \
+  --server-side-encryption AES256 \
+  --metadata "sha256=$SHA256,label=$LABEL" \
+  --tagging "retention-days=$RETENTION&label=$LABEL" \
+  --query ETag --output text >/dev/null
+
+echo "== respaldo listo: $BACKUP_ID"
+printf '{"backup_id":"%s","key":"%s","bytes":%s,"sha256":"%s","label":"%s","retention_days":%s,"created_at":"%s"}\n' \
+  "$BACKUP_ID" "$KEY" "$BYTES" "$SHA256" "$LABEL" "$RETENTION" "$CREATED_AT"
