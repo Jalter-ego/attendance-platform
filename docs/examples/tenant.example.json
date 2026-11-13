@@ -1,0 +1,22 @@
+{
+  "tenant_id": "san-marcos",
+  "name": "Instituto San Marcos",
+  "env": "test",
+  "region": "us-east-2",
+  "plan": "basic",
+  "engine": "terraform",
+  "contact_email": "admin@example.com",
+  "timezone": "America/La_Paz",
+  "sizing": {
+    "frontend": "t3.micro",
+    "backend": "t3.micro",
+    "db": "t3.micro",
+    "db_disk_gb": 10
+  },
+  "ami": {
+    "frontend": "ami-00000000000000000",
+    "backend": "ami-00000000000000000",
+    "db": "ami-00000000000000000"
+  },
+  "suspended": false
+}

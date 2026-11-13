@@ -1,0 +1,5 @@
+bucket       = "attendance-platform-tfstate-REEMPLAZAR_CUENTA"
+key          = "platform/bootstrap/terraform.tfstate"
+region       = "us-east-2"
+encrypt      = true
+use_lockfile = true
