@@ -1,0 +1,50 @@
+{
+  "builds": [
+    {
+      "name": "ubuntu",
+      "builder_type": "amazon-ebs",
+      "build_time": 1794582613,
+      "files": null,
+      "artifact_id": "us-east-2:ami-01d275314c49f8f54",
+      "packer_run_uuid": "9134a44e-9534-9bbb-1cd4-449d7219acdf",
+      "custom_data": {
+        "backend_ref": "master",
+        "frontend_ref": "master",
+        "git_commit": "77d065d",
+        "image_version": "0.1.0",
+        "role": "frontend"
+      }
+    },
+    {
+      "name": "ubuntu",
+      "builder_type": "amazon-ebs",
+      "build_time": 1794582631,
+      "files": null,
+      "artifact_id": "us-east-2:ami-004fbba786152c410",
+      "packer_run_uuid": "9134a44e-9534-9bbb-1cd4-449d7219acdf",
+      "custom_data": {
+        "backend_ref": "master",
+        "frontend_ref": "master",
+        "git_commit": "77d065d",
+        "image_version": "0.1.0",
+        "role": "db"
+      }
+    },
+    {
+      "name": "ubuntu",
+      "builder_type": "amazon-ebs",
+      "build_time": 1794582929,
+      "files": null,
+      "artifact_id": "us-east-2:ami-037ded0f97ddc6869",
+      "packer_run_uuid": "9134a44e-9534-9bbb-1cd4-449d7219acdf",
+      "custom_data": {
+        "backend_ref": "master",
+        "frontend_ref": "master",
+        "git_commit": "77d065d",
+        "image_version": "0.1.0",
+        "role": "monitoring"
+      }
+    }
+  ],
+  "last_run_uuid": "9134a44e-9534-9bbb-1cd4-449d7219acdf"
+}

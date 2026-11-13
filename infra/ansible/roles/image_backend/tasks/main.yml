@@ -20,6 +20,12 @@
     backend_commit: "{{ backend_git.after }}"
     backend_release: "{{ attendance_root }}/releases/backend-{{ backend_git.after[:12] }}"
 
+- name: Carpeta de la release
+  ansible.builtin.file:
+    path: "{{ backend_release }}"
+    state: directory
+    mode: "0755"
+
 - name: Copiar el código a la release
   ansible.builtin.command:
     argv: [rsync, -a, --delete, --exclude=.git, /usr/src/attendance-core/, "{{ backend_release }}/"]
