@@ -1,7 +1,49 @@
-#
+# Configuración local y secretos
+.env
+.env.*
+!.env.example
+!.env.*.example
+.aws/
+.local/
+keys/
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Estado, planes y caché de IaC. Los lockfiles de proveedores sí se versionan.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.json.example
+*.backend.hcl
+!*.backend.hcl.example
+infra/bootstrap/backend.tf
+crash.log
+crash.*.log
+.pulumi/
+
+# Dependencias, compilación y resultados locales
+node_modules/
+dist/
+build/
+coverage/
+__pycache__/
+.venv/
+*.log
+
+# Editor y sistema
+.idea/
+.vscode/
+.DS_Store
+*~
+
 # Packer (infra/packer). ami-manifest.json y ami-ids.json SI se suben: el IaC los lee.
 packer_cache/
-crash.log
 *.pkrvars.hcl
 !example.pkrvars.hcl
 *.json.lock
