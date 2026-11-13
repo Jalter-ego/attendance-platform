@@ -124,7 +124,7 @@
         group: root
         mode: "0600"
         content: |
-          # {{ ansible_managed }}
+          # Generado por boot.yml (attendance-boot) en el primer arranque; no editar a mano.
           BACKUP_BUCKET={{ backup_bucket }}
           BACKUP_PREFIX=tenants/{{ tenant_id }}/{{ env }}
           BACKUP_RETENTION_DAYS={{ backup_retention_days | int }}
