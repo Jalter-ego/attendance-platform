@@ -8,7 +8,7 @@ El frontend publica HTTP y reenvía `/core/` a la API privada. La API solo admit
 
 1. Actualizar la [base](../base/README.md) para crear el endpoint privado SSM y volver a exportar `.local/base.outputs.json`.
 2. Integrar el PR probado de P3, que aporta `infra/cloud-init/user-data.yaml.tftpl`, `attendance-boot` y los playbooks horneados. Este módulo consume ese contrato; no instala la aplicación ni sustituye el trabajo de P3/P4.
-3. Tener los IDs concretos de las AMIs `frontend`, `backend`, `db`, disponibles en la misma cuenta/región y con la etiqueta `Role` correcta. No se selecciona una AMI nueva automáticamente.
+3. Tener los IDs concretos de las AMIs `frontend`, `backend`, `db`, disponibles en la misma cuenta/región y con la etiqueta `Role` correcta. No se selecciona una AMI nueva automáticamente. **No usar las AMIs 0.1.0**: P2 reportó un fallo del inventario de Ansible que dejaba el backend con 502. Esperar los IDs de las imágenes 0.1.1 reconstruidas y validadas; este módulo recibe IDs, no actualiza la versión por su cuenta.
 4. Crear fuera de Terraform los `SecureString` de este tenant con la clave administrada de SSM. P6 automatizará su creación:
 
 | Parámetro | Valor requerido por el arranque actual de P3 |
@@ -68,6 +68,14 @@ terraform -chdir=infra/terraform/tenant output -json > .local/san-marcos.outputs
 El orden es EBS → EC2 DB → adjuntar EBS → backend → frontend. Cloud-init de DB espera el disco; el backend espera la BD. `Apply complete` confirma infraestructura, no el final de Ansible. Comprueba las dos URLs `frontend_health` y `backend_health` antes de marcar el tenant como listo. El estado detallado de P3 queda en `/var/lib/attendance/boot.json` y `/var/log/attendance-boot.log` dentro de la VM; este módulo aún no habilita lectura remota vía Session Manager.
 
 P2/P6 deben usar un directorio de ejecución independiente por tenant/entorno y mantener accesibles la plantilla cloud-init y su ruta. No cambiar el backend de un directorio mientras se ejecuta otra operación. La opción `cloud_init_template_path` permite indicar la ubicación de la plantilla cuando el worker prepara su directorio. La cola de P6 evita operaciones simultáneas y el bloqueo S3 protege el estado.
+
+La ruta por defecto parte de `path.module` y supone la estructura completa de este repositorio. Funciona al ejecutar directamente `infra/terraform/tenant` o referenciarlo con `source` relativo dentro del checkout. Si se usa `source` absoluto, Terraform copia el módulo a su caché y la carpeta hermana `cloud-init` puede quedar fuera: hay que pasar `cloud_init_template_path`, preferiblemente como ruta absoluta. Al llamar al módulo desde la raíz del monorepo, se puede añadir al bloque `module`:
+
+```hcl
+cloud_init_template_path = abspath("${path.root}/infra/cloud-init/user-data.yaml.tftpl")
+```
+
+El worker debe calcular esa ruta según su checkout. Una ruta relativa proporcionada por variable se interpreta desde el directorio raíz de ejecución de Terraform, no desde el archivo de variables. Para un `source` Git que seleccione `//infra/terraform/tenant`, Terraform descarga el paquete completo y la ruta por defecto puede conservarse si esa revisión también incluye `infra/cloud-init/`. Ver [fuentes de módulos y subdirectorios](https://developer.hashicorp.com/terraform/language/block/module#source).
 
 Si falla una creación, conserva el backend, las variables y los secretos. Ejecuta otro `plan` sobre el mismo estado para completar lo pendiente; no crees otra clave ni borres el lock de una operación activa. Un plan guardado anterior puede quedar obsoleto tras cambios de otro participante.
 

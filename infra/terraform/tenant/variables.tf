@@ -123,5 +123,5 @@ variable "limits" {
 variable "cloud_init_template_path" {
   type        = string
   default     = null
-  description = "Ruta alternativa de la plantilla de P3; null usa infra/cloud-init/user-data.yaml.tftpl."
+  description = "Ruta de la plantilla de P3, preferiblemente absoluta al consumir el modulo desde otra ubicacion. null usa ../../cloud-init/user-data.yaml.tftpl desde path.module; una ruta relativa explicita parte de la raiz de ejecucion de Terraform."
 }
