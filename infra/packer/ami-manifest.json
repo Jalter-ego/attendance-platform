@@ -44,7 +44,22 @@
         "image_version": "0.1.0",
         "role": "monitoring"
       }
+    },
+    {
+      "name": "ubuntu",
+      "builder_type": "amazon-ebs",
+      "build_time": 1794583945,
+      "files": null,
+      "artifact_id": "us-east-2:ami-0810501067f8804e3",
+      "packer_run_uuid": "2b687daa-a270-d213-9fa9-cf08565b5362",
+      "custom_data": {
+        "backend_ref": "master",
+        "frontend_ref": "master",
+        "git_commit": "4fc7253",
+        "image_version": "0.1.0",
+        "role": "backend"
+      }
     }
   ],
-  "last_run_uuid": "9134a44e-9534-9bbb-1cd4-449d7219acdf"
+  "last_run_uuid": "2b687daa-a270-d213-9fa9-cf08565b5362"
 }

@@ -22,7 +22,9 @@ def main(manifest_path: str, output_path: str) -> None:
     for build in sorted(builds, key=lambda b: b["build_time"]):
         # artifact_id = "us-east-2:ami-0123..."; con varias regiones vienen separadas por coma.
         region, ami = build["artifact_id"].split(",")[0].split(":")
-        latest[build["name"]] = {"region": region, "ami": ami, "build_time": build["build_time"],
+        # build["name"] es el nombre de la fuente ("ubuntu"); el rol viaja en custom_data.
+        role = build.get("custom_data", {}).get("role") or build["name"]
+        latest[role] = {"region": region, "ami": ami, "build_time": build["build_time"],
                                  **build.get("custom_data", {})}
 
     if not latest:
