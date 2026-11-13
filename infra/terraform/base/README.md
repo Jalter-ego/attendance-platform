@@ -8,6 +8,7 @@ Prepara:
 - Internet Gateway y una tabla de rutas pública; una tabla independiente para la subred privada.
 - Security groups para el constructor de Packer y para el futuro servidor de monitoreo.
 - Rol/perfil de EC2 que permitirá a Prometheus descubrir instancias mediante consultas de lectura a AWS.
+- Endpoint privado de Parameter Store (SSM), con HTTPS desde la VPC y lectura limitada a `/tenants/*`.
 - El output `integration`, con los IDs que usarán P2, P3, P5 y P6.
 
 La EC2 de monitoreo se creará después, cuando P3 entregue su AMI y P5 tenga su configuración. Las tres EC2 de cada tenant tendrán otro módulo y otro estado. Por eso A5 queda parcialmente implementado en este bloque.
@@ -52,7 +53,9 @@ terraform -chdir=infra/terraform/base apply ../../../.local/base.tfplan
 terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json
 ```
 
-Revisa el plan antes de aplicar. El resultado debe contener red, SG y el rol/perfil de monitoreo; este bloque no contiene instancias, NAT Gateway ni endpoints privados.
+Revisa el plan antes de aplicar. El resultado contiene red, SG, rol/perfil de monitoreo y un endpoint privado SSM; no contiene instancias ni NAT Gateway. El endpoint tiene [costo por hora y tráfico](https://aws.amazon.com/privatelink/pricing/), compartido entre los tenants.
+
+Si ya creaste la base anterior, genera un plan nuevo con este código. Debe añadir el SG de SSM, su regla HTTPS y el endpoint, sin reemplazar la VPC/subredes. No reutilices el plan anterior. Después de aplicarlo, vuelve a exportar `integration`: ahora incluye `ssm_endpoint_id`.
 
 La última orden guarda los IDs, sin credenciales, en un archivo local que puedes compartir con quienes integran Packer, los adaptadores y el worker. Los otros clones inicializan este mismo backend antes de planificar; no crean una red nueva por persona.
 
@@ -64,7 +67,9 @@ Antes del primer build SSH, P1 debe añadir las IPs públicas autorizadas a `ope
 
 ## Conectividad de backend y BD privados
 
-La subred privada queda aislada, sin salida a Internet en este bloque. Antes de lanzar allí backend/BD que lean Parameter Store o usen Session Manager, hay que añadir conectividad a SSM mediante endpoints privados o una salida de red acordada. Esto se resolverá junto con A4/C1; no basta con conceder permisos IAM. Las imágenes y los playbooks de arranque deben contemplar esa conectividad.
+La subred privada no tiene salida a Internet. El endpoint `com.amazonaws.<region>.ssm`, con DNS privado, permite que AWS CLI lea Parameter Store desde backend/BD. Las AMIs de P3 deben traer todo instalado; este acceso no permite descargar paquetes ni repositorios durante el primer arranque.
+
+Este bloque cubre lectura de parámetros, con la clave administrada `alias/aws/ssm`. Session Manager/Run Command requieren ampliar endpoints, permisos y configuración del agente; todavía no se incluyen. Una clave KMS propia también necesitaría permisos adicionales. El SG permite HTTPS dentro de la VPC y las políticas IAM por tenant limitan qué parámetros puede leer cada EC2.
 
 Las reglas de backend→BD y de monitoreo→exporters serán SG propios por tenant, definidos en el siguiente módulo. Compartir VPC/subredes no sustituye ese aislamiento.
 
@@ -76,6 +81,6 @@ terraform -chdir=infra/terraform/base validate
 terraform -chdir=infra/terraform/base test
 ```
 
-Las pruebas simulan AWS. Revisan DNS, separación de subredes/rutas, accesos cerrados por defecto, autorización de IPs concretas y permisos de descubrimiento de Prometheus. No prueban conectividad real ni crean la VPC.
+Las cinco pruebas simulan AWS. Revisan DNS, separación de subredes/rutas, accesos cerrados por defecto, autorización de IPs concretas, permisos de descubrimiento de Prometheus y acceso privado a Parameter Store. No prueban conectividad real ni crean la VPC.
 
 Referencias: [Internet Gateway y subredes](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html), [conectividad privada de SSM](https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-create-vpc.html), [descubrimiento EC2 de Prometheus](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config).

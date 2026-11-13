@@ -10,6 +10,7 @@ output "integration" {
     packer_security_group_id         = aws_security_group.packer.id
     monitoring_security_group_id     = aws_security_group.monitoring.id
     monitoring_instance_profile_name = aws_iam_instance_profile.monitoring.name
+    ssm_endpoint_id                  = aws_vpc_endpoint.ssm.id
   }
 
   depends_on = [
