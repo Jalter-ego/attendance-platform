@@ -8,7 +8,7 @@ El frontend publica HTTP y reenvía `/core/` a la API privada. La API solo admit
 
 1. Actualizar la [base](../base/README.md) para crear el endpoint privado SSM y volver a exportar `.local/base.outputs.json`.
 2. Integrar el PR probado de P3, que aporta `infra/cloud-init/user-data.yaml.tftpl`, `attendance-boot` y los playbooks horneados. Este módulo consume ese contrato; no instala la aplicación ni sustituye el trabajo de P3/P4.
-3. Tener los IDs concretos de las AMIs `frontend`, `backend`, `db`, disponibles en la misma cuenta/región y con la etiqueta `Role` correcta. No se selecciona una AMI nueva automáticamente. **No usar las AMIs 0.1.0**: P2 reportó un fallo del inventario de Ansible que dejaba el backend con 502. Esperar los IDs de las imágenes 0.1.1 reconstruidas y validadas; este módulo recibe IDs, no actualiza la versión por su cuenta.
+3. Tener los IDs concretos de las AMIs `frontend`, `backend`, `db`, disponibles en la misma cuenta/región y con la etiqueta `Role` correcta. El conjunto actual está en [ami-ids.json](../../packer/ami-ids.json): **0.1.2**, región `us-east-2`, cuatro imágenes disponibles verificadas en AWS. Usar las tres entradas del tenant; `monitoring` se reserva para la EC2 compartida. **No usar las AMIs 0.1.0** por el fallo de inventario reportado por P2. Este módulo recibe IDs concretos y no cambia de versión automáticamente; la prueba funcional de la instalación completa todavía está pendiente.
 4. Crear fuera de Terraform los `SecureString` de este tenant con la clave administrada de SSM. P6 automatizará su creación:
 
 | Parámetro | Valor requerido por el arranque actual de P3 |
@@ -18,6 +18,10 @@ El frontend publica HTTP y reenvía `/core/` a la API privada. La API solo admit
 | `/tenants/san-marcos/test/admin_password` | Aleatorio, alfanumérico, 12–72 caracteres; necesario para tener administrador inicial |
 
 No pases esos valores como variables de Terraform: terminarían en el estado. Backend y DB pueden leer el prefijo de su tenant/entorno; frontend no tiene permiso para leer secretos. En esta versión ambos lectores comparten ese prefijo, como utiliza el script de P3.
+
+El PR #5 añade respaldos (RF-19 opcional). `base.backups_bucket` vacío mantiene la función desactivada; con un bucket habilita IAM de S3/Run Command y la etiqueta del volumen para DLM. **La AMI DB 0.1.2 no trae los scripts de respaldo**: para activarlo, esperar la 0.2.0 de P3 y su prueba de restauración. Si se usa 0.1.2 para probar Attendance, configurar explícitamente `base.backups_bucket=""`, incluso si el output de la base ya incluye el bucket nuevo.
+
+`backup` admite `{ schedule="weekly", retention_days=28 }` (predeterminado), `daily/14` o `daily/30`. El worker recibe esos datos del plan de P4. La etiqueta de snapshots combina proyecto y política (`BackupPolicy=attendance-platform:weekly-28d`); los permisos S3 de DB se limitan a `tenants/<id>/<env>/`.
 
 ## Preparar las variables
 
@@ -100,4 +104,4 @@ terraform -chdir=infra/terraform/tenant validate
 terraform -chdir=infra/terraform/tenant test
 ```
 
-Seis pruebas con AWS simulado verifican aislamiento de red/IAM, datos de cloud-init y EBS, outputs y rechazo de plantilla ausente, arquitectura incompatible, otra VPC o DNS privado desactivado. La fixture de cloud-init solo verifica el contrato y no arranca Attendance. Todavía falta la prueba real con AMIs, secretos y health checks.
+Siete pruebas con AWS simulado verifican aislamiento de red/IAM, datos de cloud-init y EBS, outputs, permisos/etiquetas de respaldos y rechazo de plantilla ausente, arquitectura incompatible, otra VPC o DNS privado desactivado. La fixture de cloud-init solo verifica el contrato y no arranca Attendance. Todavía falta la prueba real con AMIs, secretos y health checks.

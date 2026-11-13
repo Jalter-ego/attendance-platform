@@ -7,7 +7,7 @@ resource "aws_ebs_volume" "db" {
   # BackupPolicy activa el snapshot programado de DLM (base/backups.tf).
   tags = merge(
     { Name = "${local.resource_prefix}-pgdata", Role = "db" },
-    var.base.backups_bucket != "" ? { BackupPolicy = local.backup_policy } : {},
+    var.base.backups_bucket != "" ? { BackupPolicy = local.backup_policy_tag } : {},
   )
 }
 
@@ -38,7 +38,13 @@ resource "aws_instance" "db" {
 
   tags = { Name = "${local.resource_prefix}-db", Role = "db" }
 
-  depends_on = [terraform_data.prerequisites, aws_iam_role_policy.parameters, aws_vpc_security_group_egress_rule.outbound]
+  depends_on = [
+    terraform_data.prerequisites,
+    aws_iam_role_policy.parameters,
+    aws_iam_role_policy.db_ssm_agent,
+    aws_iam_role_policy.db_backups,
+    aws_vpc_security_group_egress_rule.outbound,
+  ]
 }
 
 resource "aws_volume_attachment" "db" {

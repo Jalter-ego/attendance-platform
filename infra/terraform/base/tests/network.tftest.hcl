@@ -152,6 +152,52 @@ run "reject_public_admin_access" {
   expect_failures = [var.operator_cidrs]
 }
 
+run "backup_resources_and_project_isolation" {
+  command = plan
+
+  assert {
+    condition = (
+      length(aws_dlm_lifecycle_policy.db) == 3 &&
+      alltrue([for policy, resource in aws_dlm_lifecycle_policy.db :
+        resource.policy_details[0].target_tags == tomap({ BackupPolicy = "attendance-platform:${policy}" })
+      ])
+    )
+    error_message = "DLM debe usar una sola etiqueta que combine proyecto y politica; varias etiquetas se combinan con OR."
+  }
+
+  assert {
+    condition = (
+      aws_s3_bucket.backups.bucket == "attendance-platform-backups-123456789012" &&
+      aws_s3_bucket_public_access_block.backups.block_public_acls &&
+      aws_s3_bucket_public_access_block.backups.block_public_policy &&
+      aws_s3_bucket_public_access_block.backups.ignore_public_acls &&
+      aws_s3_bucket_public_access_block.backups.restrict_public_buckets &&
+      one(aws_s3_bucket_server_side_encryption_configuration.backups.rule).apply_server_side_encryption_by_default[0].sse_algorithm == "AES256"
+    )
+    error_message = "Los respaldos deben usar un bucket propio cifrado y con los cuatro bloqueos de acceso publico."
+  }
+
+  assert {
+    condition = (
+      aws_vpc_endpoint.s3.vpc_endpoint_type == "Gateway" &&
+      toset(aws_vpc_endpoint.s3.route_table_ids) == toset([aws_route_table.private.id]) &&
+      toset(keys(aws_vpc_endpoint.ssm_agent)) == toset(["ec2messages", "ssmmessages"]) &&
+      alltrue([for endpoint in aws_vpc_endpoint.ssm_agent : endpoint.private_dns_enabled])
+    )
+    error_message = "El acceso S3 y los canales SSM deben estar disponibles desde la subred privada."
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in jsondecode(aws_vpc_endpoint.ssm.policy).Statement :
+      statement.Resource != "*" || alltrue([
+        for action in statement.Action : !contains(["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:*", "*"], action)
+      ])
+    ])
+    error_message = "Ampliar SSM para Run Command no debe habilitar lectura global de secretos."
+  }
+}
+
 run "reject_invalid_vpc" {
   command = plan
 

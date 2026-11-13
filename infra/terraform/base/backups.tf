@@ -134,8 +134,9 @@ resource "aws_vpc_endpoint" "ssm_agent" {
   tags = { Name = "${var.project_name}-${each.key}", Role = "ssm-endpoint" }
 }
 
-# Snapshots programados: una política DLM por entrada del catálogo. El módulo tenant
-# etiqueta el volumen de BD con BackupPolicy=<clave>; DLM solo toca volúmenes de este proyecto.
+# Snapshots programados: una política DLM por entrada del catálogo. Una única
+# etiqueta compuesta evita seleccionar discos de otro proyecto con el mismo plan.
+# DLM combina varias etiquetas de destino con OR, no con AND.
 resource "aws_iam_role" "dlm" {
   name = "${var.project_name}-dlm"
   assume_role_policy = jsonencode({
@@ -162,7 +163,7 @@ resource "aws_dlm_lifecycle_policy" "db" {
   policy_details {
     resource_types = ["VOLUME"]
     target_tags = {
-      BackupPolicy = each.key
+      BackupPolicy = "${var.project_name}:${each.key}"
     }
 
     schedule {
@@ -181,4 +182,6 @@ resource "aws_dlm_lifecycle_policy" "db" {
   }
 
   tags = { Role = "backups" }
+
+  depends_on = [aws_iam_role_policy_attachment.dlm]
 }

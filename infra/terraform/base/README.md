@@ -9,6 +9,7 @@ Prepara:
 - Security groups para el constructor de Packer y para el futuro servidor de monitoreo.
 - Rol/perfil de EC2 que permitirá a Prometheus descubrir instancias mediante consultas de lectura a AWS.
 - Endpoint privado de Parameter Store (SSM), con HTTPS desde la VPC y lectura limitada a `/tenants/*`.
+- Respaldos de P3: otro bucket S3 para dumps, endpoint gateway de S3, dos endpoints del agente SSM y tres políticas DLM para snapshots de datos.
 - El output `integration`, con los IDs que usarán P2, P3, P5 y P6.
 
 La EC2 de monitoreo se creará después, cuando P3 entregue su AMI y P5 tenga su configuración. Las tres EC2 de cada tenant tendrán otro módulo y otro estado. Por eso A5 queda parcialmente implementado en este bloque.
@@ -53,9 +54,29 @@ terraform -chdir=infra/terraform/base apply ../../../.local/base.tfplan
 terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json
 ```
 
-Revisa el plan antes de aplicar. El resultado contiene red, SG, rol/perfil de monitoreo y un endpoint privado SSM; no contiene instancias ni NAT Gateway. El endpoint tiene [costo por hora y tráfico](https://aws.amazon.com/privatelink/pricing/), compartido entre los tenants.
+Revisa el plan antes de aplicar. Este bloque no contiene instancias ni NAT Gateway. Con la extensión de respaldos hay tres endpoints Interface (`ssm`, `ec2messages`, `ssmmessages`), con [costo por hora y tráfico](https://aws.amazon.com/privatelink/pricing/) compartido entre los tenants, además del endpoint gateway de S3.
 
 Si ya creaste la base anterior, genera un plan nuevo con este código. Debe añadir el SG de SSM, su regla HTTPS y el endpoint, sin reemplazar la VPC/subredes. No reutilices el plan anterior. Después de aplicarlo, vuelve a exportar `integration`: ahora incluye `ssm_endpoint_id`.
+
+## Actualización de respaldos (PR #5)
+
+El PR #5 ya está fusionado. Sobre la base con el endpoint SSM creado, la revisión dio **14 por crear, 1 por modificar y 0 por destruir**. Se añade el bucket `attendance-platform-backups-<cuenta>` (diferente del bucket de estado), sus protecciones/retención, el acceso privado a S3, dos endpoints del agente y las políticas de snapshots. La modificación amplía la política del endpoint SSM para el agente, conservando el límite de lectura de secretos por prefijo.
+
+Desde la raíz del repositorio:
+
+```bash
+export AWS_PROFILE=attendance-terraform
+terraform -chdir=infra/terraform/base plan -input=false -lock-timeout=5m -var-file=../../../.local/base.tfvars -out=../../../.local/base-backups.tfplan
+terraform -chdir=infra/terraform/base show ../../../.local/base-backups.tfplan
+terraform -chdir=infra/terraform/base apply -lock-timeout=5m ../../../.local/base-backups.tfplan
+terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json
+```
+
+Revisar los recursos y permisos, además de los totales. Solo una persona ejecuta `apply`; los demás esperan a que termine. Si el código o el estado cambian, se genera un plan nuevo. El plan guardado inicialmente para revisión, `.local/base-backups-review.tfplan`, corresponde al PR antes del ajuste de aislamiento y no debe usarse para aplicar esa corrección.
+
+DLM selecciona volúmenes por una única etiqueta compuesta: `BackupPolicy=attendance-platform:weekly-28d` (o `daily-14d` / `daily-30d`). El módulo tenant usa el mismo formato. Añadir otra etiqueta `Project` al selector no serviría como filtro conjunto: [DLM combina las etiquetas de destino con OR](https://docs.aws.amazon.com/ebs/latest/userguide/dlm-elements.html#dlm-target-tags).
+
+Aplicar la base prepara la infraestructura de respaldos. P3 todavía debe publicar la AMI de BD 0.2.0 con los scripts y el arranque actualizados, y probar respaldo/restauración. Las AMIs 0.1.2 registradas no incluyen esa extensión. RF-19 sigue siendo opcional; para probar solo Attendance con 0.1.2, el tenant puede mantener `base.backups_bucket=""`.
 
 La última orden guarda los IDs, sin credenciales, en un archivo local que puedes compartir con quienes integran Packer, los adaptadores y el worker. Los otros clones inicializan este mismo backend antes de planificar; no crean una red nueva por persona.
 
@@ -69,7 +90,7 @@ Antes del primer build SSH, P1 debe añadir las IPs públicas autorizadas a `ope
 
 La subred privada no tiene salida a Internet. El endpoint `com.amazonaws.<region>.ssm`, con DNS privado, permite que AWS CLI lea Parameter Store desde backend/BD. Las AMIs de P3 deben traer todo instalado; este acceso no permite descargar paquetes ni repositorios durante el primer arranque.
 
-Este bloque cubre lectura de parámetros, con la clave administrada `alias/aws/ssm`. Session Manager/Run Command requieren ampliar endpoints, permisos y configuración del agente; todavía no se incluyen. Una clave KMS propia también necesitaría permisos adicionales. El SG permite HTTPS dentro de la VPC y las políticas IAM por tenant limitan qué parámetros puede leer cada EC2.
+La lectura de parámetros usa la clave administrada `alias/aws/ssm`. La extensión de respaldos añade los canales del agente y permisos en la EC2 DB para Run Command; su funcionamiento se verificará con la nueva AMI de P3. Una clave KMS propia necesitaría permisos adicionales. El SG permite HTTPS dentro de la VPC y las políticas IAM por tenant limitan qué parámetros puede leer cada EC2.
 
 Las reglas de backend→BD y de monitoreo→exporters serán SG propios por tenant, definidos en el siguiente módulo. Compartir VPC/subredes no sustituye ese aislamiento.
 
@@ -81,6 +102,6 @@ terraform -chdir=infra/terraform/base validate
 terraform -chdir=infra/terraform/base test
 ```
 
-Las cinco pruebas simulan AWS. Revisan DNS, separación de subredes/rutas, accesos cerrados por defecto, autorización de IPs concretas, permisos de descubrimiento de Prometheus y acceso privado a Parameter Store. No prueban conectividad real ni crean la VPC.
+Las seis pruebas simulan AWS. Revisan DNS, separación de subredes/rutas, accesos cerrados por defecto, autorización de IPs concretas, permisos de descubrimiento de Prometheus, acceso privado a Parameter Store y aislamiento de respaldos. No prueban conectividad real ni crean la VPC.
 
 Referencias: [Internet Gateway y subredes](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html), [conectividad privada de SSM](https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-create-vpc.html), [descubrimiento EC2 de Prometheus](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config).

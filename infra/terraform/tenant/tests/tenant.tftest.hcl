@@ -264,3 +264,49 @@ run "reject_endpoint_without_private_dns" {
 
   expect_failures = [terraform_data.prerequisites]
 }
+
+run "backups_preserve_tenant_and_project_isolation" {
+  command = plan
+
+  variables {
+    base = {
+      project_name                 = "attendance-platform"
+      region                       = "us-east-2"
+      availability_zone            = "us-east-2a"
+      vpc_id                       = "vpc-00000000000000001"
+      public_subnet_id             = "subnet-00000000000000001"
+      private_subnet_id            = "subnet-00000000000000002"
+      monitoring_security_group_id = "sg-00000000000000004"
+      ssm_endpoint_id              = "vpce-00000000000000001"
+      backups_bucket               = "attendance-platform-backups-123456789012"
+    }
+    backup = { schedule = "daily", retention_days = 14 }
+  }
+
+  assert {
+    condition = (
+      aws_ebs_volume.db.tags["BackupPolicy"] == "attendance-platform:daily-14d" &&
+      output.backup.policy == "daily-14d" &&
+      output.backup.prefix == "tenants/san-marcos/test" &&
+      strcontains(aws_instance.db.user_data, "attendance-platform-backups-123456789012")
+    )
+    error_message = "La BD debe recibir la configuracion de respaldos y una etiqueta DLM limitada al proyecto."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy.db_backups) == 1 &&
+      jsondecode(aws_iam_role_policy.db_backups[0].policy).Statement[0].Resource == "arn:aws:s3:::attendance-platform-backups-123456789012/tenants/san-marcos/test/*" &&
+      jsondecode(aws_iam_role_policy.db_backups[0].policy).Statement[1].Condition.StringLike["s3:prefix"] == ["tenants/san-marcos/test/*"]
+    )
+    error_message = "La VM de BD solo debe leer, escribir y listar respaldos de su tenant/entorno."
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in jsondecode(aws_iam_role_policy.db_ssm_agent[0].policy).Statement :
+      alltrue([for action in statement.Action : !contains(["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:*", "*"], action)])
+    ])
+    error_message = "Los permisos del agente SSM deben conservar la separacion de secretos entre tenants."
+  }
+}
