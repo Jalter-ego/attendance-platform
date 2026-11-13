@@ -4,3 +4,4 @@ packer_cache/
 crash.log
 *.pkrvars.hcl
 !example.pkrvars.hcl
+*.json.lock
