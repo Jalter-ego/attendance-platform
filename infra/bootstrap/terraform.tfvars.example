@@ -1,0 +1,2 @@
+project_name = "attendance-platform"
+aws_region   = "us-east-2"
