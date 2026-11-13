@@ -48,6 +48,12 @@ packer build -only='attendance.amazon-ebs.backend' -var image_version=0.1.1 .
 packer build -var backend_ref=develop -var frontend_ref=develop .
 ```
 
+Con la red de P1 en lugar de la VPC por defecto (antes P1 debe agregar tu IP a `operator_cidrs`):
+
+```bash
+packer build -var subnet_id=<public_subnet_id> -var security_group_id=<packer_security_group_id> .
+```
+
 Con GNU make (Linux/WSL): `make packer-validate`, `make packer-build`, `make packer-build ONLY=backend`.
 
 Costo: 4 instancias `t3.small` durante ~15-20 min por build + almacenamiento de las AMIs
@@ -64,7 +70,7 @@ data "aws_ami" "role" {
   most_recent = true
   filter {
     name   = "tag:Project"
-    values = ["attendance"]
+    values = ["attendance-platform"]   # la 0.1.0 se construyó con "attendance"
   }
   filter {
     name   = "tag:Role"

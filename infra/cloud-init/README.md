@@ -26,8 +26,8 @@ Renderizar una vez por VM:
 ```hcl
 user_data = templatefile("${path.module}/../../cloud-init/user-data.yaml.tftpl", {
   role             = "backend"                       # frontend | backend | db
-  tenant_id        = var.tenant_id                   # ^[a-z0-9][a-z0-9-]{1,30}$
-  env              = var.env                         # dev | test | prod
+  tenant_id        = var.tenant_id                   # 3-40: ^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$
+  env              = var.env                         # test | prod
   plan             = var.plan
   region           = var.region
   ssm_prefix       = "/tenants/${var.tenant_id}/${var.env}"

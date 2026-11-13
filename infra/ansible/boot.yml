@@ -16,8 +16,9 @@
       ansible.builtin.assert:
         that:
           - vm_role in ['frontend', 'backend', 'db', 'monitoring']
-          - tenant_id is match('^[a-z0-9][a-z0-9-]{1,30}$')
-          - env in ['dev', 'test', 'prod']
+          # Mismas reglas que docs/contratos-integracion.md (P1).
+          - tenant_id is match('^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$')
+          - env in ['test', 'prod']
         fail_msg: "tenant.json inválido (vm_role={{ vm_role | default('?') }}, tenant_id={{ tenant_id | default('?') }})"
 
     - name: Nombre del host = tenant-env-rol (se ve así en Netdata y en los logs)

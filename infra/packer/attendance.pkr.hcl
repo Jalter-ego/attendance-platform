@@ -22,7 +22,7 @@ locals {
   stamp = formatdate("YYYYMMDD-hhmm", timestamp())
 
   common_tags = {
-    Project      = "attendance"
+    Project      = "attendance-platform"
     ManagedBy    = "packer"
     ImageVersion = var.image_version
     GitCommit    = var.git_commit
@@ -47,6 +47,13 @@ source "amazon-ebs" "ubuntu" {
   region        = var.region
   instance_type = var.build_instance_type
   ssh_username  = "ubuntu"
+
+  # Vacío = VPC por defecto con SG temporal (así se construyó la 0.1.0).
+  # Con la red de P1: subnet_id = public_subnet_id y security_group_id = packer_security_group_id
+  # de `terraform output -json integration` (requiere tu IP en operator_cidrs).
+  subnet_id                   = var.subnet_id != "" ? var.subnet_id : null
+  security_group_id           = var.security_group_id != "" ? var.security_group_id : null
+  associate_public_ip_address = var.subnet_id != "" ? true : null
 
   source_ami_filter {
     filters = {
@@ -76,7 +83,7 @@ source "amazon-ebs" "ubuntu" {
 
   run_tags = {
     Name      = "packer-build-attendance"
-    Project   = "attendance"
+    Project   = "attendance-platform"
     ManagedBy = "packer"
   }
 }

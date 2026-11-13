@@ -63,3 +63,14 @@ variable "pnpm_version" {
   default     = "10.11.0"
 }
 
+variable "subnet_id" {
+  description = "Subred pública donde corre el build. Vacío = VPC por defecto."
+  type        = string
+  default     = ""
+}
+
+variable "security_group_id" {
+  description = "SG para el build (packer_security_group_id de la base). Vacío = SG temporal de Packer."
+  type        = string
+  default     = ""
+}
