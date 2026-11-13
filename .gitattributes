@@ -1,0 +1,2 @@
+# Keep LF everywhere: CRLF in cloud-init changes user_data and forces EC2 replacement.
+* text=auto eol=lf
