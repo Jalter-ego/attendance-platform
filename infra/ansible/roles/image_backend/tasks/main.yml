@@ -1,0 +1,72 @@
+---
+- name: Usuario de servicio de la API
+  ansible.builtin.user:
+    name: attendance
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ attendance_root }}"
+    create_home: false
+
+- name: Descargar el backend ({{ backend_ref }})
+  ansible.builtin.git:
+    repo: "{{ backend_repo }}"
+    version: "{{ backend_ref }}"
+    dest: /usr/src/attendance-core
+    depth: 1
+  register: backend_git
+
+- name: Definir la release
+  ansible.builtin.set_fact:
+    backend_commit: "{{ backend_git.after }}"
+    backend_release: "{{ attendance_root }}/releases/backend-{{ backend_git.after[:12] }}"
+
+- name: Copiar el código a la release
+  ansible.builtin.command:
+    argv: [rsync, -a, --delete, --exclude=.git, /usr/src/attendance-core/, "{{ backend_release }}/"]
+  changed_when: true
+
+# Se mantienen las devDependencies: sequelize-cli (migraciones) es dev en el repo.
+- name: Instalar dependencias y compilar la API
+  ansible.builtin.shell: |
+    set -e
+    pnpm install --frozen-lockfile
+    pnpm build
+  args:
+    chdir: "{{ backend_release }}"
+    creates: "{{ backend_release }}/dist/src/main.js"
+  environment:
+    CI: "true"
+    NODE_ENV: development
+
+- name: El enlace backend-current apunta a la release horneada
+  ansible.builtin.file:
+    src: "{{ backend_release }}"
+    dest: "{{ attendance_root }}/backend-current"
+    state: link
+    force: true
+
+- name: La release es de root y la API solo la lee
+  ansible.builtin.file:
+    path: "{{ backend_release }}"
+    owner: root
+    group: attendance
+    mode: "u=rwX,g=rX,o="
+    recurse: true
+
+- name: Borrar el código fuente temporal
+  ansible.builtin.file:
+    path: /usr/src/attendance-core
+    state: absent
+
+# El servicio queda habilitado pero no arranca hasta que boot.yml escriba backend.env.
+- name: Servicio systemd de la API
+  ansible.builtin.template:
+    src: attendance-backend.service.j2
+    dest: /etc/systemd/system/attendance-backend.service
+    mode: "0644"
+
+- name: Habilitar la API
+  ansible.builtin.systemd_service:
+    name: attendance-backend
+    enabled: true
+    daemon_reload: true

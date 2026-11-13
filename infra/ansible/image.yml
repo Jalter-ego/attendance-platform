@@ -1,0 +1,56 @@
+---
+# Se ejecuta DENTRO de Packer (provisioner ansible-local) al construir cada AMI.
+# Instala software, nunca datos de un tenant: eso lo hace boot.yml en el primer arranque.
+#
+#   ansible-playbook image.yml -e image_role=<frontend|backend|db|monitoring>
+
+- name: Hornear la AMI de un rol
+  hosts: all
+  connection: local
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Validar el rol pedido
+      ansible.builtin.assert:
+        that: image_role in ['frontend', 'backend', 'db', 'monitoring']
+        fail_msg: "image_role debe ser frontend, backend, db o monitoring (llegó: {{ image_role | default('nada') }})"
+
+  roles:
+    - role: image_base
+    - role: image_agents
+    - role: image_node
+      when: image_role in ['frontend', 'backend']
+    - role: image_frontend
+      when: image_role == 'frontend'
+    - role: image_backend
+      when: image_role == 'backend'
+    - role: image_db
+      when: image_role == 'db'
+    - role: image_monitoring
+      when: image_role == 'monitoring'
+
+  post_tasks:
+    - name: Registrar las versiones horneadas (RF-13)
+      ansible.builtin.copy:
+        dest: "{{ attendance_etc }}/image.json"
+        mode: "0644"
+        content: "{{ image_manifest | to_nice_json }}\n"
+      vars:
+        image_manifest:
+          role: "{{ image_role }}"
+          image_version: "{{ image_version }}"
+          platform_commit: "{{ git_commit }}"
+          built_at: "{{ ansible_date_time.iso8601 }}"
+          base_os: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          ansible: "{{ ansible_version.full }}"
+          node: "{{ node_version if image_role in ['frontend', 'backend'] else '' }}"
+          backend_commit: "{{ backend_commit | default('') }}"
+          frontend_commit: "{{ frontend_commit | default('') }}"
+          postgres: "{{ postgres_version if image_role == 'db' else '' }}"
+          prometheus: "{{ prometheus_version if image_role == 'monitoring' else '' }}"
+          agents:
+            node_exporter: "{{ node_exporter_version }}"
+            process_exporter: "{{ process_exporter_version }}"
+            otelcol_contrib: "{{ otelcol_version }}"
+            netdata: "{{ netdata_version | default('ubuntu-repo') }}"

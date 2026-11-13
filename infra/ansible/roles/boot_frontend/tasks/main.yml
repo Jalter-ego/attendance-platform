@@ -1,0 +1,30 @@
+---
+# El build ya está en la AMI; solo falta apuntar nginx al backend privado de SU tenant.
+
+- name: Upstream = backend del tenant ({{ backend_host }})
+  ansible.builtin.copy:
+    dest: /etc/nginx/conf.d/attendance-upstream.conf
+    mode: "0644"
+    content: |
+      upstream attendance_backend {
+          server {{ backend_host }}:{{ backend_port }};
+      }
+  register: upstream
+
+- name: Validar nginx
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Recargar nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: "{{ 'reloaded' if upstream.changed else 'started' }}"
+    enabled: true
+
+- name: El frontend responde
+  ansible.builtin.uri:
+    url: http://127.0.0.1/healthz
+  register: front
+  until: front.status == 200
+  retries: 10
+  delay: 2

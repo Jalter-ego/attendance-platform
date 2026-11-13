@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    root /var/www/attendance;
+    index index.html;
+    server_tokens off;
+
+    # Health check del frontend (lo usa el worker de la plataforma).
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # API del tenant: el backend está en una subred privada.
+    location {{ backend_api_path | regex_replace('/api/v1$', '') }}/ {
+        proxy_pass http://attendance_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location = /config.json {
+        add_header Cache-Control "no-store";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

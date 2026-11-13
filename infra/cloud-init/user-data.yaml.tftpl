@@ -1,0 +1,38 @@
+#cloud-config
+# Primer arranque de una VM de tenant (frontend, backend o db) creada desde una AMI de Packer.
+# El motor IaC la renderiza con templatefile(); ver README.md para la lista de variables.
+#
+# Qué hace:
+#   1. Escribe la identidad del tenant en /etc/attendance/tenant.json (sin secretos).
+#   2. Ejecuta /usr/local/sbin/attendance-boot (horneado en la AMI), que lee los secretos
+#      de SSM (/tenants/<id>/<env>/...), corre Ansible en modo local (boot.yml) y deja la
+#      señal de listo en /var/lib/attendance/boot.json.
+
+write_files:
+  - path: /etc/attendance/tenant.json
+    owner: root:root
+    permissions: "0640"
+    content: |
+      ${jsonencode({
+        vm_role          = role
+        tenant_id        = tenant_id
+        env              = env
+        plan             = plan
+        region           = region
+        ssm_prefix       = ssm_prefix
+        vpc_cidr         = vpc_cidr
+        db_host          = db_host
+        backend_host     = backend_host
+        db_volume_id     = db_volume_id
+        institution_name = institution_name
+        timezone         = timezone
+        admin_email      = admin_email
+        limits           = limits
+      })}
+
+timezone: ${timezone}
+
+runcmd:
+  - [/usr/local/sbin/attendance-boot]
+
+final_message: "attendance ${role} (${tenant_id}/${env}): cloud-init terminó en $UPTIME s"

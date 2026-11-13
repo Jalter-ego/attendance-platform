@@ -1,1 +1,6 @@
 #
+# Packer (infra/packer). ami-manifest.json y ami-ids.json SI se suben: el IaC los lee.
+packer_cache/
+crash.log
+*.pkrvars.hcl
+!example.pkrvars.hcl

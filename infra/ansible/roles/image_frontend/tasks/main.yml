@@ -1,0 +1,75 @@
+---
+- name: Instalar nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+
+- name: Descargar el frontend ({{ frontend_ref }})
+  ansible.builtin.git:
+    repo: "{{ frontend_repo }}"
+    version: "{{ frontend_ref }}"
+    dest: /usr/src/attendance-web
+    depth: 1
+  register: frontend_git
+
+- name: Guardar el commit horneado
+  ansible.builtin.set_fact:
+    frontend_commit: "{{ frontend_git.after }}"
+
+# Sin VITE_API_URL el build usa la ruta relativa /core/api/v1, que nginx reenvía al
+# backend del tenant. Así la misma AMI sirve para cualquier tenant.
+- name: Instalar dependencias y compilar
+  ansible.builtin.shell: |
+    set -e
+    pnpm install --frozen-lockfile
+    pnpm build
+  args:
+    chdir: /usr/src/attendance-web
+    creates: /usr/src/attendance-web/dist/index.html
+  environment:
+    CI: "true"
+
+- name: Publicar el build en /var/www/attendance
+  ansible.builtin.command:
+    argv: [rsync, -a, --delete, /usr/src/attendance-web/dist/, /var/www/attendance/]
+  changed_when: true
+
+- name: Borrar el código fuente (la AMI solo lleva el build)
+  ansible.builtin.file:
+    path: /usr/src/attendance-web
+    state: absent
+
+- name: Upstream del backend (placeholder; boot.yml pone la IP privada del backend del tenant)
+  ansible.builtin.copy:
+    dest: /etc/nginx/conf.d/attendance-upstream.conf
+    mode: "0644"
+    content: |
+      upstream attendance_backend {
+          server 127.0.0.1:{{ backend_port }};
+      }
+
+- name: Sitio nginx de la app
+  ansible.builtin.template:
+    src: nginx-attendance.conf.j2
+    dest: /etc/nginx/sites-available/attendance
+    mode: "0644"
+
+- name: Activar el sitio de la app
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/attendance
+    path: /etc/nginx/sites-enabled/attendance
+    state: link
+
+- name: Quitar el sitio de ejemplo
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Validar la configuración de nginx
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: El servicio nginx arranca con la VM
+  ansible.builtin.systemd_service:
+    name: nginx
+    enabled: true

@@ -1,0 +1,14 @@
+---
+gh: https://github.com
+otelcol_deb: >-
+  {{ gh }}/open-telemetry/opentelemetry-collector-releases/releases/download/v{{ otelcol_version }}/otelcol-contrib_{{ otelcol_version }}_linux_amd64.deb
+exporters:
+  - bin: node_exporter
+    dir: "node_exporter-{{ node_exporter_version }}.linux-amd64"
+    url: "{{ gh }}/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+    args: "--web.listen-address=:9100"
+  - bin: process-exporter
+    dir: "process-exporter-{{ process_exporter_version }}.linux-amd64"
+    url: >-
+      {{ gh }}/ncabatoff/process-exporter/releases/download/v{{ process_exporter_version }}/process-exporter-{{ process_exporter_version }}.linux-amd64.tar.gz
+    args: "-web.listen-address=:9256 -config.path=/etc/process-exporter.yml"

@@ -1,0 +1,107 @@
+---
+# 1) Disco EBS de datos -> /var/lib/postgresql   2) PostgreSQL solo accesible desde la VPC
+# 3) Base y usuario propios del tenant (nada compartido entre tenants)
+
+- name: Validar secretos
+  ansible.builtin.assert:
+    that: db_password is defined and db_password | length >= 16
+    fail_msg: "Falta db_password en SSM ({{ ssm_prefix }}/db_password)"
+  no_log: true
+
+# En instancias Nitro el volumen aparece como NVMe; su id está en /dev/disk/by-id.
+- name: Esperar el disco de datos ({{ db_volume_id }})
+  ansible.builtin.wait_for:
+    path: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ db_volume_id | replace('-', '') }}"
+    timeout: 300
+  when: db_volume_id | default('') | length > 0
+
+- name: Ruta del disco de datos
+  ansible.builtin.set_fact:
+    db_device: "{{ '/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_' ~ (db_volume_id | replace('-', '')) if db_volume_id | default('') | length > 0 else '' }}"
+
+- name: Sin disco de datos los datos quedan en el disco raíz (solo para pruebas)
+  ansible.builtin.debug:
+    msg: "AVISO: db_volume_id vacío; PostgreSQL usará el disco raíz."
+  when: db_device == ''
+
+- name: Montar el disco de datos
+  when: db_device != ''
+  block:
+    # community.general.filesystem no viene con ansible-core (lo único instalado en la AMI).
+    - name: Formatear si está vacío (nunca reformatea un disco con datos)
+      ansible.builtin.shell: |
+        if blkid "$DEV" >/dev/null 2>&1; then echo "ya tiene sistema de archivos"; exit 0; fi
+        mkfs.ext4 -q -L pgdata "$DEV" && echo formateado
+      environment:
+        DEV: "{{ db_device }}"
+      register: mkfs
+      changed_when: "'formateado' in mkfs.stdout"
+
+    - name: ¿Ya está montado?
+      ansible.builtin.command: findmnt -n /var/lib/postgresql
+      register: pg_mount
+      changed_when: false
+      failed_when: false
+
+    - name: Copiar el cluster inicial al disco nuevo
+      when: pg_mount.rc != 0
+      ansible.builtin.shell: |
+        set -eo pipefail
+        systemctl stop postgresql || true
+        mkdir -p /mnt/pgdata
+        mount LABEL=pgdata /mnt/pgdata
+        if [ -z "$(ls -A /mnt/pgdata | grep -v lost+found)" ]; then
+          rsync -a /var/lib/postgresql/ /mnt/pgdata/
+        fi
+        umount /mnt/pgdata
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Montaje permanente (fstab)
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: '^LABEL=pgdata '
+        line: "LABEL=pgdata /var/lib/postgresql ext4 defaults,nofail 0 2"
+
+    - name: Montar /var/lib/postgresql
+      ansible.builtin.command: mount /var/lib/postgresql  # noqa: command-instead-of-module
+      when: pg_mount.rc != 0
+      changed_when: true
+
+- name: PostgreSQL escucha en la IP privada
+  ansible.builtin.lineinfile:
+    path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+    regexp: "^#?listen_addresses"
+    line: "listen_addresses = '*'"
+
+# El SG ya limita el puerto 5432 al SG del backend del mismo tenant; esto es la 2ª capa.
+- name: Solo el usuario del tenant, desde la VPC, con contraseña
+  ansible.builtin.blockinfile:
+    path: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
+    marker: "# {mark} attendance tenant {{ tenant_id }}"
+    block: |
+      host    {{ db_name }}    {{ db_user }}    {{ vpc_cidr }}    scram-sha-256
+
+- name: Arrancar PostgreSQL
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: restarted
+    enabled: true
+
+- name: Crear usuario y base del tenant
+  ansible.builtin.shell: |
+    set -e
+    psql -v ON_ERROR_STOP=1 -v pw="$DB_PASSWORD" <<'SQL'
+    SELECT format('CREATE ROLE %I LOGIN', '{{ db_user }}')
+      WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ db_user }}') \gexec
+    ALTER ROLE {{ db_user }} WITH LOGIN PASSWORD :'pw';
+    SELECT format('CREATE DATABASE %I OWNER %I', '{{ db_name }}', '{{ db_user }}')
+      WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '{{ db_name }}') \gexec
+    REVOKE ALL ON DATABASE {{ db_name }} FROM PUBLIC;
+    SQL
+  become_user: postgres
+  environment:
+    DB_PASSWORD: "{{ db_password }}"
+  no_log: true
+  changed_when: true

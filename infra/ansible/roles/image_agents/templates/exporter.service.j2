@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description={{ item.bin }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=exporter
+Group=exporter
+ExecStart=/usr/local/bin/{{ item.bin }} {{ item.args }}
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

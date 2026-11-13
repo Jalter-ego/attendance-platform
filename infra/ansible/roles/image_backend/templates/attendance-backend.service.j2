@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Attendance NestJS API
+After=network-online.target
+Wants=network-online.target
+# Sin la configuración del tenant no arranca (la escribe boot.yml en el primer arranque).
+ConditionPathExists={{ attendance_etc }}/backend.env
+
+[Service]
+Type=simple
+User=attendance
+Group=attendance
+WorkingDirectory={{ attendance_root }}/backend-current
+EnvironmentFile={{ attendance_etc }}/backend.env
+ExecStart=/usr/local/bin/node dist/src/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
