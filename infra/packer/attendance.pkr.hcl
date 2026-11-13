@@ -112,7 +112,7 @@ build {
 
   provisioner "shell" {
     script          = "${path.root}/scripts/install-ansible.sh"
-    execute_command = "chmod +x {{ .Path }}; sudo -E bash '{{ .Path }}'"
+    execute_command = "chmod +x {{ .Path }}; sudo bash '{{ .Path }}'"
   }
 
   # Script de primer arranque que llama cloud-init (ver ../cloud-init/).
@@ -138,7 +138,7 @@ build {
 
   provisioner "shell" {
     script          = "${path.root}/scripts/cleanup.sh"
-    execute_command = "chmod +x {{ .Path }}; sudo -E bash '{{ .Path }}'"
+    execute_command = "chmod +x {{ .Path }}; sudo bash '{{ .Path }}'"
   }
 
   # ami-manifest.json: IDs de las AMIs que consume el IaC (Terraform/Tofu/Pulumi/CFN).

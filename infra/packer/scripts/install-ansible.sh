@@ -12,4 +12,5 @@ apt-get -o Acquire::Retries=3 update
 apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
   ansible-core python3-apt ca-certificates curl unzip jq git xz-utils
 
-ansible --version | head -1
+# Sin ejecutar `ansible` aquí: correría como root y dejaría ~ubuntu/.ansible con dueño root.
+dpkg-query -W ansible-core
