@@ -36,7 +36,7 @@ variable "backend_repo" {
 variable "backend_ref" {
   description = "Rama, tag o commit del backend que se hornea en la AMI."
   type        = string
-  default     = "master"
+  default     = "develop"
 }
 
 variable "frontend_repo" {
@@ -48,7 +48,7 @@ variable "frontend_repo" {
 variable "frontend_ref" {
   description = "Rama, tag o commit del frontend que se hornea en la AMI."
   type        = string
-  default     = "master"
+  default     = "develop"
 }
 
 variable "node_version" {
