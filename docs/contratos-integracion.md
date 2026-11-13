@@ -62,8 +62,10 @@ Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El respons
 - P1 creará perfiles IAM limitados al prefijo del cliente. P3/P4 leerán los parámetros al arrancar y escribirán los archivos de entorno con permisos restringidos.
 - `INSTITUTION_NAME` e `INSTITUTION_TIMEZONE` configuran Attendance. Los secretos del backend y PostgreSQL nunca se escriben en `config.json` del frontend.
 - `infra/terraform/tenant` consume la plantilla `infra/cloud-init/user-data.yaml.tftpl` del PR de P3: `role`, `tenant_id`, `env`, `plan`, `region`, `ssm_prefix`, `vpc_cidr`, `db_host`, `backend_host`, `db_volume_id`, `institution_name`, `timezone`, `admin_email`, `limits`. No se copia ni se sustituye esa plantilla desde P1.
+- Si P2/P6 ejecutan una copia aislada del módulo o lo instalan mediante `source` absoluto, deben pasar `cloud_init_template_path` con una ruta absoluta al archivo del checkout. El valor por defecto requiere que se conserve la estructura del monorepo.
 - Orden: EBS → DB → adjuntar disco → backend con IP privada de DB → frontend con IP privada de backend. El frontend usa nginx como proxy; API/DB no tienen IP pública. No se considera listo un tenant hasta superar los health checks de P4.
 - Los tres IDs de AMI se fijan por despliegue; se validan cuenta/región, estado disponible, arquitectura x86_64 y etiqueta `Role`. El catálogo inicial debe usar los tamaños t3 admitidos por el módulo. P3 debe confirmar con P1/P4 los nombres y tamaños antes de integrar el PR.
+- Integración actual: no usar AMIs 0.1.0 por el fallo de inventario Ansible reportado por P2 (backend con 502). Esperar los IDs concretos y la validación de las AMIs 0.1.1 reconstruidas antes de la prueba conjunta.
 
 ## Puertos que deben conservarse
 

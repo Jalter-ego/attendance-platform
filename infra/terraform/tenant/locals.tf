@@ -28,7 +28,7 @@ resource "terraform_data" "prerequisites" {
   lifecycle {
     precondition {
       condition     = local.template_exists
-      error_message = "Falta infra/cloud-init/user-data.yaml.tftpl de P3. Integra su PR validado antes de planificar un tenant."
+      error_message = "No se encuentra la plantilla cloud-init en ${local.template_path}. Integra la plantilla validada de P3 o indica su ruta absoluta en cloud_init_template_path si el modulo se ejecuta desde otra ubicacion."
     }
     precondition {
       condition = (
