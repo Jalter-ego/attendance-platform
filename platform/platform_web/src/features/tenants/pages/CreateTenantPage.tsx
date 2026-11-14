@@ -454,6 +454,12 @@ export function CreateTenantPage() {
                       Estado propio en S3: tenants/{draft.tenant_id}/{draft.env}/terraform.tfstate
                     </li>
                   )}
+                  {draft.engine === 'cloudformation' && (
+                    <li>
+                      Stack propio en CloudFormation: attendance-platform-{draft.tenant_id}-{draft.env}
+                      (estado administrado por AWS)
+                    </li>
+                  )}
                 </ul>
                 <label className={`provision-toggle ${engineReady ? '' : 'disabled'}`}>
                   <input

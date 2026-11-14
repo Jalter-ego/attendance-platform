@@ -111,7 +111,7 @@ platform_web/src/
   lib/                       Cliente HTTP
 ```
 
-- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. Pendiente: Pulumi y CloudFormation. Registrar no equivale a aprovisionar.
+- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. CloudFormation conectado ([plantilla](../infra/cloudformation/README.md)). Pendiente: Pulumi. Registrar no equivale a aprovisionar.
 - **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
 - **P3/P4/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`. El catálogo inicial se consulta desde la API; P4 puede ampliarlo mediante nuevas migraciones y sus endpoints.
 - **P6:** el ejecutor común y el servicio SSM ya están conectados al flujo de creación de P2 (`src/modules/provisioning/`), junto con los health checks y la persistencia de deployments/outputs/versiones.
@@ -164,7 +164,12 @@ La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índic
 
 ## Motores IaC (P2)
 
-El worker crea y administra la infraestructura de cada tenant con el motor elegido al registrarlo. Todos los motores implementan la misma interfaz `EngineAdapter` (`src/engines/adapter.js`): `versions`, `preview`, `apply`, `suspend`, `resume`, `destroy` y `outputs`. Todos devuelven el resultado común `{status, resources, outputs{urls,instance_ids,private_ips}, tool_versions, log_ref}`. Hoy están conectados **Terraform** y **OpenTofu**, que ejecutan el módulo [`infra/terraform/tenant`](../infra/terraform/tenant/README.md) de P1. Pulumi y CloudFormation aparecen en el registro, pero la API rechaza sus operaciones con `409 ENGINE_NOT_AVAILABLE` hasta que tengan adaptador.
+El worker crea y administra la infraestructura de cada tenant con el motor elegido al registrarlo. Todos los motores implementan la misma interfaz `EngineAdapter` (`src/engines/adapter.js`): `versions`, `preview`, `apply`, `suspend`, `resume`, `destroy` y `outputs`. Todos devuelven el resultado común `{status, resources, outputs{urls,instance_ids,private_ips}, tool_versions, log_ref}`. Están conectados:
+
+- **Terraform** y **OpenTofu**, que ejecutan el módulo [`infra/terraform/tenant`](../infra/terraform/tenant/README.md) de P1.
+- **CloudFormation**, que ejecuta la plantilla [`infra/cloudformation/tenant.yaml`](../infra/cloudformation/README.md) con el mismo stack, usando change sets y el SDK de AWS. Suspender y reanudar van por la API de EC2 (D5).
+
+Pulumi aparece en el registro, pero la API rechaza sus operaciones con `409 ENGINE_NOT_AVAILABLE` hasta que tenga adaptador. Lo que sigue en esta sección describe Terraform/OpenTofu; CloudFormation se documenta en su README.
 
 | Operación | Estados admitidos | Resultado | Qué hace |
 | --- | --- | --- | --- |

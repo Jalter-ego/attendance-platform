@@ -331,11 +331,13 @@ test(
   }),
 );
 
-test('Pulumi y CloudFormation todavía no están conectados', () => {
+test('Pulumi todavía no está conectado; CloudFormation sí', () => {
   assert.equal(engineAvailable('terraform'), true);
   assert.equal(engineAvailable('tofu'), true);
+  assert.equal(engineAvailable('cloudformation'), true);
   assert.equal(engineAvailable('pulumi'), false);
-  assert.throws(() => getAdapter('cloudformation', config), OperationError);
+  assert.throws(() => getAdapter('pulumi', config), OperationError);
+  assert.equal(getAdapter('cloudformation', config).engine, 'cloudformation');
 });
 
 test('assertCanEnqueue valida motor, estado y confirmación de eliminación', () => {

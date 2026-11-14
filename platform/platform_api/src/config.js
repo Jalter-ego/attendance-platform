@@ -47,6 +47,8 @@ const schema = z.object({
     .default(repoPath('infra/cloud-init/user-data.yaml.tftpl')),
   IAC_PLAN_PREVIEW: z.string().trim().default(repoPath('infra/terraform/plan_preview.py')),
   IAC_RUNS_DIR: z.string().trim().default(repoPath('.local/runs')),
+  IAC_CFN_TEMPLATE: z.string().trim().default(repoPath('infra/cloudformation/tenant.yaml')),
+  CFN_POLL_MS: z.coerce.number().int().min(10).max(60000).default(10000),
   IAC_TIMEOUT_S: z.coerce.number().int().min(300).max(7200).default(3600),
   HEALTH_TIMEOUT_S: z.coerce.number().int().min(30).max(3600).default(900),
   TERRAFORM_BIN: z.string().trim().default('terraform'),
