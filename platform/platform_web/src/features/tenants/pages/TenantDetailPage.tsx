@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { tenantsService } from '../services/tenants.service';
 import { engineNames, planNames } from '../types';
 import { operationsService } from '../../operations/services/operations.service';
@@ -11,6 +11,7 @@ import { Icon } from '../../../components/Icon';
 
 export function TenantDetailPage() {
   const { id = '' } = useParams();
+  const location = useLocation();
   const { user } = useAuth();
   const fetcher = useCallback(
     (signal: AbortSignal) => tenantsService.detail(id, signal),
@@ -25,7 +26,9 @@ export function TenantDetailPage() {
     tenant: string;
     operation: string;
   } | null>(null);
-  const [actionError, setActionError] = useState('');
+  const [actionError, setActionError] = useState(
+    () => (location.state as { creationError?: string } | null)?.creationError ?? '',
+  );
   const [pending, setPending] = useState(false);
   const selected =
     selection?.tenant === id ? selection.operation : data?.operations[0]?.id;
@@ -66,9 +69,11 @@ export function TenantDetailPage() {
   const versions = deployment
     ? [
         [engineNames[deployment.engine], deployment.tool_versions[deployment.engine]],
-        ['Proveedor AWS', deployment.tool_versions.provider_aws],
-        ['AMIs (Packer)', deployment.tool_versions.image_version],
-        ['Plantillas (commit)', deployment.tool_versions.templates_commit],
+        ...(deployment.engine === 'cloudformation'
+          ? [['SDK de AWS', deployment.tool_versions.aws_sdk], ['Plantilla (SHA-256)', deployment.tool_versions.template_sha256]]
+          : [['Proveedor AWS', deployment.tool_versions.provider_aws]]),
+        ['AMIs (Packer)', deployment.tool_versions.image_version ?? deployment.tool_versions.ami],
+        ['Plantillas (commit)', deployment.tool_versions.templates_commit ?? deployment.tool_versions.templates],
       ]
     : [];
   return (
@@ -187,6 +192,12 @@ export function TenantDetailPage() {
                 <dd>{value ?? '—'}</dd>
               </div>
             ))}
+            {deployment.outputs.stack_name && (
+              <div>
+                <dt>Stack</dt>
+                <dd>{deployment.outputs.stack_name}</dd>
+              </div>
+            )}
             <div>
               <dt>Recursos</dt>
               <dd>
@@ -208,20 +219,28 @@ export function TenantDetailPage() {
           </p>
         )}
         {user?.role === 'platform_admin' && canCreate && (
-          <button
-            className="button primary"
-            disabled={pending || busy}
-            onClick={() => {
-              void start('create');
-            }}
-          >
-            {busy
-              ? 'Hay una operación pendiente'
-              : data.status === 'failed'
-                ? 'Volver a aplicar (no duplica recursos)'
-                : 'Crear infraestructura'}
-            <Icon name="arrow" size={17} />
-          </button>
+          <>
+            {!data.creation.available && (
+              <p className="muted">{data.creation.message}</p>
+            )}
+            <button
+              className="button primary"
+              disabled={pending || busy || !data.creation.available}
+              onClick={() => {
+                void start('create');
+              }}
+            >
+              {busy
+                ? 'Hay una operación pendiente'
+                : data.status === 'failed'
+                  ? 'Reintentar instalación'
+                  : 'Crear infraestructura'}
+              <Icon name="arrow" size={17} />
+            </button>
+          </>
+        )}
+        {deployment?.status === 'failed' && (
+          <p className="alert info">Se guardaron recursos de un intento anterior. La instalación todavía necesita completar su verificación.</p>
         )}
       </section>
       <div className="section-heading">

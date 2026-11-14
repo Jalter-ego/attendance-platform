@@ -15,14 +15,15 @@ export interface Tenant {
 }
 
 export interface TenantDetail extends Tenant {
+  creation: { available: boolean; message: string | null };
   operations: Operation[];
   deployments: {
     id: string;
     created_at: string;
     engine: Tenant['engine'];
-    status: string;
+    status: 'provisioning' | 'ready' | 'suspended' | 'deleted' | 'failed';
     ami: Record<string, string>;
-    outputs: { urls?: Record<string, string | null> };
+    outputs: { urls?: Record<string, string | null>; stack_name?: string; stack_id?: string };
     resources: { type: string; role: string; id: string }[];
     tool_versions: Record<string, string | null>;
   }[];

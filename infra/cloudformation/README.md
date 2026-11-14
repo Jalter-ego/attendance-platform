@@ -35,7 +35,10 @@ El reintento es idempotente:
 
 - **El estado lo administra AWS:** es el propio stack. No hay archivo de estado, bucket ni bloqueo propio. CloudFormation no admite dos operaciones a la vez sobre el mismo stack, y la cola de la plataforma tampoco permite dos operaciones del mismo tenant.
 - **Secretos:** no pasan por la plantilla. El adaptador solo envía nombres, IDs y tamaños; las contraseñas viven en SSM (`/tenants/<id>/<env>/`). La identidad de cloud-init (`BootIdentityJson`) no contiene secretos.
-- **Cancelación:** cancelar en la plataforma deja de seguir el stack, pero **la operación continúa en AWS**. Un reintento espera a que termine y retoma desde ese estado.
+- **Cancelación:** cancelar en la plataforma deja de seguir el stack, pero **la operación continúa en AWS**. Un reintento espera a que termine y retoma desde ese estado. También se espera un stack estable antes de detener o arrancar EC2.
+- **Tiempo máximo:** `IAC_TIMEOUT_S` (3600 segundos por defecto) limita sondeos y peticiones SDK; al agotarse se deja de esperar, sin ordenar una eliminación remota.
+- **Seguimiento:** cada ejecución/eliminación usa `ClientRequestToken` y solo se confirma con el evento raíz de esa operación. Así un `COMPLETE` anterior no publica un resultado prematuro. Ver [StackEvent de AWS](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_StackEvent.html). La creación solicita rollback explícitamente; cancelar el seguimiento no inicia un rollback.
+- **Integración P6:** no exige `IAC_STATE_BUCKET`/`DEPLOYMENT_STATE_BUCKET` ni escribe `backend.hcl` o `tenant.tfvars.json`. Guarda el nombre/ARN del stack, la versión del SDK y el hash de plantilla. El bucket de respaldos de la base es independiente de este estado.
 
 ## Permisos del worker
 

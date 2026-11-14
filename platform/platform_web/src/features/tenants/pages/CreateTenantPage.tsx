@@ -132,14 +132,15 @@ export function CreateTenantPage() {
         name: input.name.trim(),
         contact_email: input.contact_email.trim(),
       });
+      let creationError = '';
       if (provision && engineReady) {
         try {
           await operationsService.infra(tenant.id, { type: 'create' });
-        } catch {
-          // El registro ya existe: el detalle permite lanzar la creación otra vez.
+        } catch (error) {
+          creationError = `La institución se registró, pero no se pudo iniciar su instalación. ${error instanceof Error ? error.message : 'Revisa la configuración e inténtalo desde el detalle.'}`;
         }
       }
-      navigate(`/tenants/${tenant.id}`);
+      navigate(`/tenants/${tenant.id}`, { state: { creationError } });
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -456,8 +457,7 @@ export function CreateTenantPage() {
                   )}
                   {draft.engine === 'cloudformation' && (
                     <li>
-                      Stack propio en CloudFormation: attendance-platform-{draft.tenant_id}-{draft.env}
-                      (estado administrado por AWS)
+                      Stack independiente para esta institución y entorno, con estado administrado por AWS.
                     </li>
                   )}
                 </ul>
