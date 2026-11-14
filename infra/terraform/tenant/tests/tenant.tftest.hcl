@@ -113,6 +113,7 @@ variables {
     private_subnet_id            = "subnet-00000000000000002"
     monitoring_security_group_id = "sg-00000000000000004"
     ssm_endpoint_id              = "vpce-00000000000000001"
+    backups_bucket               = "attendance-platform-backups-123456789012"
   }
   tenant_id                = "san-marcos"
   env                      = "test"
@@ -183,6 +184,7 @@ run "tenant_isolation_and_storage" {
   assert {
     condition = (
       length(aws_iam_role_policy.parameters) == 2 &&
+      toset(keys(aws_iam_role_policy.parameters)) == toset(["backend", "db"]) &&
       alltrue([for policy in aws_iam_role_policy.parameters :
         toset(jsondecode(policy.policy).Statement[0].Resource) == toset([
           "arn:aws:ssm:us-east-2:123456789012:parameter/tenants/san-marcos/test",
@@ -193,6 +195,7 @@ run "tenant_isolation_and_storage" {
     )
     error_message = "SSM debe limitarse a este tenant/entorno; la URL de API debe usar el proxy publico."
   }
+
 }
 
 run "another_tenant_has_its_own_prefix" {
@@ -297,10 +300,10 @@ run "backups_preserve_tenant_and_project_isolation" {
   assert {
     condition = (
       length(aws_iam_role_policy.db_backups) == 1 &&
-      jsondecode(aws_iam_role_policy.db_backups[0].policy).Statement[0].Resource == "arn:aws:s3:::attendance-platform-backups-123456789012/tenants/san-marcos/test/*" &&
-      jsondecode(aws_iam_role_policy.db_backups[0].policy).Statement[1].Condition.StringLike["s3:prefix"] == ["tenants/san-marcos/test/*"]
+      jsondecode(aws_iam_role_policy.db_backups[0].policy).Statement[0].Resource == "arn:aws:s3:::attendance-platform-backups-123456789012/tenants/san-marcos/test/db/*" &&
+      jsondecode(aws_iam_role_policy.db_backups[0].policy).Statement[1].Condition.StringLike["s3:prefix"] == ["tenants/san-marcos/test/db/*"]
     )
-    error_message = "La VM de BD solo debe leer, escribir y listar respaldos de su tenant/entorno."
+    error_message = "La VM de BD solo debe acceder a sus dumps; no puede sobrescribir versiones de la app."
   }
 
   assert {
@@ -377,5 +380,127 @@ run "resume_refreshes_public_urls" {
       output.urls.backend_health == "http://198.51.100.42/core/api/v1/health"
     )
     error_message = "Reanudar debe conservar EC2/EBS y publicar la IP nueva leida despues del arranque."
+  }
+}
+
+run "app_update_permissions_and_idempotence" {
+  command = apply
+
+  variables {
+    base = {
+      project_name                 = "attendance-platform"
+      region                       = "us-east-2"
+      availability_zone            = "us-east-2a"
+      vpc_id                       = "vpc-00000000000000001"
+      public_subnet_id             = "subnet-00000000000000001"
+      private_subnet_id            = "subnet-00000000000000002"
+      monitoring_security_group_id = "sg-00000000000000004"
+      ssm_endpoint_id              = "vpce-00000000000000001"
+      backups_bucket               = "attendance-platform-backups-123456789012"
+    }
+  }
+
+  assert {
+    condition = (
+      output.instance_ids == run.resume_refreshes_public_urls.instance_ids &&
+      output.db_volume_id == run.resume_refreshes_public_urls.db_volume_id
+    )
+    error_message = "Reaplicar con permisos de S3/SSM debe conservar las EC2 y el EBS existentes."
+  }
+
+  assert {
+    condition = (
+      toset(keys(aws_iam_role_policy.app_releases)) == toset(["backend", "frontend"]) &&
+      alltrue([for role, policy in aws_iam_role_policy.app_releases :
+        policy.role == aws_iam_role.instance[role].id &&
+        length(jsondecode(policy.policy).Statement) == 2 &&
+        toset(jsondecode(policy.policy).Statement[0].Action) == toset(["s3:GetObject"]) &&
+        jsondecode(policy.policy).Statement[0].Resource == "arn:aws:s3:::attendance-platform-backups-123456789012/tenants/san-marcos/test/releases/*" &&
+        jsondecode(policy.policy).Statement[1].Action == "s3:ListBucket" &&
+        jsondecode(policy.policy).Statement[1].Resource == "arn:aws:s3:::attendance-platform-backups-123456789012" &&
+        jsondecode(policy.policy).Statement[1].Condition.StringLike["s3:prefix"] == ["tenants/san-marcos/test/releases/*"]
+      ]) &&
+      output.releases.enabled &&
+      output.releases.bucket == "attendance-platform-backups-123456789012" &&
+      output.releases.prefix == "tenants/san-marcos/test/releases"
+    )
+    error_message = "Frontend/backend solo deben descargar/listar releases propios, sin escribir ni leer respaldos."
+  }
+
+  assert {
+    condition = (
+      toset(keys(aws_iam_role_policy.app_ssm_agent)) == toset(["backend", "frontend"]) &&
+      alltrue([for role, policy in aws_iam_role_policy.app_ssm_agent :
+        policy.role == aws_iam_role.instance[role].id &&
+        jsondecode(policy.policy) == jsondecode(aws_iam_role_policy.db_ssm_agent[0].policy) &&
+        alltrue([for action in jsondecode(policy.policy).Statement[0].Action :
+          !contains(["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:SendCommand", "ssm:*", "*"], action)
+        ]) &&
+        contains(jsondecode(policy.policy).Statement[0].Action, "ssm:UpdateInstanceInformation") &&
+        contains(jsondecode(policy.policy).Statement[0].Action, "ssmmessages:OpenControlChannel")
+      ]) &&
+      toset(keys(aws_iam_role_policy.parameters)) == toset(["backend", "db"])
+    )
+    error_message = "El agente de la app debe tener los mismos canales que DB, sin enviar comandos ni ampliar lectura de secretos."
+  }
+}
+
+run "app_updates_follow_tenant_and_environment" {
+  command = plan
+
+  variables {
+    tenant_id = "otro-cliente"
+    env       = "prod"
+    base = {
+      project_name                 = "attendance-platform"
+      region                       = "us-east-2"
+      availability_zone            = "us-east-2a"
+      vpc_id                       = "vpc-00000000000000001"
+      public_subnet_id             = "subnet-00000000000000001"
+      private_subnet_id            = "subnet-00000000000000002"
+      monitoring_security_group_id = "sg-00000000000000004"
+      ssm_endpoint_id              = "vpce-00000000000000001"
+      backups_bucket               = "attendance-platform-backups-123456789012"
+    }
+  }
+
+  assert {
+    condition = (
+      output.releases.prefix == "tenants/otro-cliente/prod/releases" &&
+      alltrue([for policy in aws_iam_role_policy.app_releases :
+        jsondecode(policy.policy).Statement[0].Resource == "arn:aws:s3:::attendance-platform-backups-123456789012/tenants/otro-cliente/prod/releases/*" &&
+        jsondecode(policy.policy).Statement[1].Condition.StringLike["s3:prefix"] == ["tenants/otro-cliente/prod/releases/*"] &&
+        !strcontains(policy.policy, "san-marcos")
+      ])
+    )
+    error_message = "Los permisos de actualizacion no deben reutilizar el prefijo de otro tenant ni entorno."
+  }
+}
+
+run "app_updates_disabled_without_bucket" {
+  command = plan
+
+  variables {
+    base = {
+      project_name                 = "attendance-platform"
+      region                       = "us-east-2"
+      availability_zone            = "us-east-2a"
+      vpc_id                       = "vpc-00000000000000001"
+      public_subnet_id             = "subnet-00000000000000001"
+      private_subnet_id            = "subnet-00000000000000002"
+      monitoring_security_group_id = "sg-00000000000000004"
+      ssm_endpoint_id              = "vpce-00000000000000001"
+    }
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy.app_releases) == 0 &&
+      length(aws_iam_role_policy.app_ssm_agent) == 0 &&
+      length(aws_iam_role_policy.db_backups) == 0 &&
+      length(aws_iam_role_policy.db_ssm_agent) == 0 &&
+      !output.releases.enabled
+    )
+    error_message = "Sin bucket no se deben habilitar permisos de actualizacion ni referencias S3 invalidas."
   }
 }

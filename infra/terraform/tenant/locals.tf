@@ -9,6 +9,7 @@ locals {
   backup_policy     = "${var.backup.schedule}-${var.backup.retention_days}d"
   backup_policy_tag = "${var.base.project_name}:${local.backup_policy}"
   backup_prefix     = "tenants/${var.tenant_id}/${var.env}"
+  release_prefix    = "${local.backup_prefix}/releases"
 
   boot_common = {
     tenant_id        = var.tenant_id

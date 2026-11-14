@@ -35,7 +35,7 @@ resource "aws_vpc_endpoint" "ssm" {
         Resource  = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/tenants/*"
       },
       {
-        # Registro y Run Command del agente SSM de la VM db (respaldos, backups.tf).
+        # Registro y Run Command del agente SSM: respaldos de DB y actualizaciones de la app.
         # Sin GetParameter(s) aquí: los secretos siguen limitados al bloque anterior.
         Sid       = "SsmAgentRunCommand"
         Effect    = "Allow"

@@ -50,3 +50,12 @@ output "backup" {
     policy = var.base.backups_bucket != "" ? local.backup_policy : null
   }
 }
+
+output "releases" {
+  description = "Versiones de la app: el worker publica; frontend/backend solo leen este prefijo."
+  value = {
+    bucket  = var.base.backups_bucket
+    prefix  = local.release_prefix
+    enabled = var.base.backups_bucket != ""
+  }
+}

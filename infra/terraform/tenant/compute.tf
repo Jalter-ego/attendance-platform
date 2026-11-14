@@ -82,7 +82,14 @@ resource "aws_instance" "backend" {
 
   tags = { Name = "${local.resource_prefix}-backend", Role = "backend" }
 
-  depends_on = [terraform_data.prerequisites, aws_volume_attachment.db, aws_iam_role_policy.parameters, aws_vpc_security_group_egress_rule.outbound]
+  depends_on = [
+    terraform_data.prerequisites,
+    aws_volume_attachment.db,
+    aws_iam_role_policy.parameters,
+    aws_iam_role_policy.app_ssm_agent,
+    aws_iam_role_policy.app_releases,
+    aws_vpc_security_group_egress_rule.outbound,
+  ]
 }
 
 resource "aws_instance" "frontend" {
@@ -112,5 +119,10 @@ resource "aws_instance" "frontend" {
 
   tags = { Name = "${local.resource_prefix}-frontend", Role = "frontend" }
 
-  depends_on = [terraform_data.prerequisites, aws_vpc_security_group_egress_rule.outbound]
+  depends_on = [
+    terraform_data.prerequisites,
+    aws_iam_role_policy.app_ssm_agent,
+    aws_iam_role_policy.app_releases,
+    aws_vpc_security_group_egress_rule.outbound,
+  ]
 }

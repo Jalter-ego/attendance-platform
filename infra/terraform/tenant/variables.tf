@@ -9,7 +9,7 @@ variable "base" {
     private_subnet_id            = string
     monitoring_security_group_id = string
     ssm_endpoint_id              = string
-    # Opcional para no romper consumidores anteriores; "" deja los respaldos desactivados.
+    # Opcional: "" desactiva respaldos y permisos de actualizacion de la app por S3/SSM.
     backups_bucket = optional(string, "")
   })
 }
