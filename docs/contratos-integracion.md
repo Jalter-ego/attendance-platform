@@ -17,7 +17,7 @@ Attendance sigue siendo una aplicación de una sola institución. `tenant_id` id
 
 ## Entrada y salida
 
-[tenant.example.json](examples/tenant.example.json) muestra la entrada del despliegue. P6 valida la solicitud y P2 transforma estos datos en las variables o parámetros de cada motor. Los IDs de AMI son ficticios; P3 entregará los reales y su versión. Los tamaños y el disco son ejemplos, pendientes de confirmar por P4.
+[tenant.example.json](examples/tenant.example.json) muestra la entrada del despliegue. P6 valida la solicitud y P2 transforma estos datos en las variables o parámetros de cada motor. Los IDs de AMI son ficticios; P3 entregará los reales y su versión. `sizing`, `limits` y `backup` son los del plan Básico; el catálogo completo, las reglas y la política de versiones están en [catalogo-planes.md](catalogo-planes.md) (P4). La plataforma despliega la copia del plan guardada en cada tenant (`plan_snapshot`), no el plan vigente.
 
 P1 entrega los IDs de VPC, subredes y SG desde `infra/terraform/base`, mediante `terraform output -json integration`. El contrato incluye `region`, `availability_zone`, `vpc_id`, `public_subnet_id`, `private_subnet_id`, `packer_security_group_id`, `monitoring_security_group_id`, `monitoring_instance_profile_name`, `ssm_endpoint_id` y `backups_bucket`. Tras aplicar cambios de la base hay que volver a exportar el output. Son configuración interna del worker, no valores que el usuario de la plataforma deba escribir en el formulario.
 
