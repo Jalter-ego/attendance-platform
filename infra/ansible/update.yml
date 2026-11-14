@@ -1,0 +1,108 @@
+---
+# Actualización de la app SIN recrear la VM (E2 · RF-15). Contrato: docs/contrato-actualizacion.md
+#
+# No va horneado en la AMI: viaja dentro del paquete de la release (carpeta ansible/) junto
+# con roles/update_backend y roles/update_frontend. Lo lanza tenant-update.sh por SSM Run
+# Command, como root, después de descargar el paquete de S3, verificar su sha256 y extraerlo:
+#
+#   ansible-playbook update.yml -e @/etc/attendance/tenant.json -e release_stage=<carpeta extraída>
+#
+# Pasos: valida el manifest, deja la release en /opt/attendance/releases/<comp>-<sha12>,
+# migra (backend), cambia el enlace de forma atómica, reinicia y comprueba la salud.
+# Si la salud falla, vuelve al enlace anterior. Siempre escribe el resultado en
+# /var/lib/attendance/update.json (el script lo imprime como última línea).
+
+- name: Actualizar la app del tenant
+  hosts: all
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    update_result_file: "{{ attendance_state }}/update.json"
+    releases_dir: "{{ attendance_root }}/releases"
+    releases_keep: 3
+    web_root: /var/www/attendance    # root de nginx-attendance.conf (image_frontend)
+
+  pre_tasks:
+    - name: Leer el manifest del paquete
+      ansible.builtin.slurp:
+        src: "{{ release_stage }}/manifest.json"
+      register: manifest_raw
+
+    - name: Datos de la release
+      ansible.builtin.set_fact:
+        manifest: "{{ manifest_raw.content | b64decode | from_json }}"
+
+    - name: Validar el paquete contra esta VM
+      ansible.builtin.assert:
+        that:
+          - manifest.format | int == 1
+          - manifest.component in ['backend', 'frontend']
+          - manifest.component == vm_role
+          - manifest.version is match('^[0-9a-f]{12}$')
+          - manifest.commit is match('^[0-9a-f]{40}$')
+          - manifest.commit.startswith(manifest.version)
+        fail_msg: >-
+          Paquete inválido para esta VM (rol={{ vm_role | default('?') }},
+          componente={{ manifest.component | default('?') }}, versión={{ manifest.version | default('?') }})
+        success_msg: "Paquete {{ manifest.component }}-{{ manifest.version }} válido para {{ tenant_id }}/{{ env }}"
+
+    - name: Carpeta de releases
+      ansible.builtin.file:
+        path: "{{ releases_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+  roles:
+    - role: update_backend
+      when: vm_role == 'backend'
+    - role: update_frontend
+      when: vm_role == 'frontend'
+
+  post_tasks:
+    # Conserva las N más recientes; nunca la activa ni la anterior (la de volver a mano).
+    - name: Releases del componente
+      ansible.builtin.find:
+        paths: "{{ releases_dir }}"
+        patterns: "{{ vm_role }}-*"
+        file_type: directory
+      register: component_releases
+      when: update_status == 'succeeded'
+
+    - name: Borrar releases viejas
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: >-
+        {{ (component_releases.files | sort(attribute='mtime', reverse=true))[releases_keep | int:]
+           | rejectattr('path', 'in', [to_release, from_release]) | list }}
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: update_status == 'succeeded'
+
+    - name: Escribir el resultado ({{ update_result_file }})
+      ansible.builtin.copy:
+        dest: "{{ update_result_file }}"
+        mode: "0644"
+        # Una sola expresión: así status es número y rolled_back booleano en el JSON.
+        content: >-
+          {{ {
+               'status': update_status,
+               'tenant': tenant_id,
+               'env': env,
+               'component': vm_role,
+               'from': update_from,
+               'to': update_to,
+               'commit': manifest.commit,
+               'rolled_back': update_rolled_back | bool,
+               'health': {'url': update_health_url, 'status': update_health_status | int},
+               'finished_at': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'),
+             } | combine({'error': update_error} if update_error else {}) | to_json }}
+
+    - name: La actualización no quedó aplicada
+      ansible.builtin.fail:
+        msg: "{{ update_status }}: {{ update_error }}"
+      when: update_status != 'succeeded'

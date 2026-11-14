@@ -1,0 +1,146 @@
+---
+# Cambia la API a la release del paquete. El código anterior queda en disco para volver atrás.
+# Deja en hechos: update_status, update_from, update_to, update_rolled_back, update_error,
+# update_health_url, update_health_status (los escribe update.yml en update.json).
+
+- name: Estado actual de la API
+  ansible.builtin.stat:
+    path: "{{ attendance_root }}/backend-current"
+  register: backend_current
+
+- name: Validar que la VM ya arrancó (boot.yml)
+  ansible.builtin.assert:
+    that:
+      - backend_current.stat.exists and backend_current.stat.islnk
+      - lookup('ansible.builtin.fileglob', attendance_etc ~ '/backend.env') != ''
+    fail_msg: "La VM no tiene backend-current o backend.env: ¿terminó attendance-boot?"
+
+- name: Versiones de origen y destino
+  ansible.builtin.set_fact:
+    from_release: "{{ backend_current.stat.lnk_source }}"
+    to_release: "{{ releases_dir }}/backend-{{ manifest.version }}"
+    update_from: "{{ backend_current.stat.lnk_source | basename | regex_replace('^backend-', '') }}"
+    update_to: "{{ manifest.version }}"
+    update_health_url: "http://127.0.0.1:{{ backend_port }}{{ backend_api_path }}/health"
+    update_health_status: 0
+    update_switched: false
+    update_rolled_back: false
+    update_error: ""
+
+- name: Actualizar la API
+  block:
+    - name: Dejar la release en {{ to_release }}
+      when: to_release != from_release
+      block:
+        - name: Quitar una copia previa de la misma versión (no es la activa)
+          ansible.builtin.file:
+            path: "{{ to_release }}"
+            state: absent
+
+        # staging está en el mismo disco: mv es un rename, no copia node_modules.
+        - name: Mover el código del paquete
+          ansible.builtin.command:
+            argv: [mv, -T, "{{ release_stage }}/app", "{{ to_release }}"]
+          changed_when: true
+
+        # Igual que image_backend: root es dueño, la API (grupo attendance) solo lee.
+        - name: Permisos de la release
+          ansible.builtin.shell: |
+            set -e
+            chown -R root:attendance '{{ to_release }}'
+            chmod -R u=rwX,g=rX,o= '{{ to_release }}'
+          changed_when: true
+
+    # Mismo comando que boot_backend (--env development: ver el comentario allí).
+    # Corre ANTES de cambiar el enlace: si falla, la API sigue en la versión anterior.
+    - name: Migraciones de la BD
+      ansible.builtin.shell: |
+        set -ea
+        . {{ attendance_etc }}/backend.env
+        ./node_modules/.bin/sequelize-cli db:migrate --env development
+      args:
+        chdir: "{{ to_release }}"
+      register: migrate
+      changed_when: "'No migrations were executed' not in migrate.stdout"
+
+    - name: Cambiar backend-current a la release nueva (atómico)
+      ansible.builtin.shell: |
+        set -e
+        ln -sfn '{{ to_release }}' '{{ attendance_root }}/backend-current.new'
+        mv -Tf '{{ attendance_root }}/backend-current.new' '{{ attendance_root }}/backend-current'
+        touch '{{ to_release }}'
+      when: to_release != from_release
+      changed_when: true
+
+    - name: Marcar que hubo cambio de enlace
+      ansible.builtin.set_fact:
+        update_switched: "{{ to_release != from_release }}"
+
+    - name: Reiniciar la API
+      ansible.builtin.systemd_service:
+        name: attendance-backend
+        state: restarted
+
+    - name: Esperar /health = 200 (consulta la BD)
+      ansible.builtin.uri:
+        url: "{{ update_health_url }}"
+        status_code: 200
+      register: health
+      until: health.status == 200
+      retries: 45
+      delay: 2
+
+    - name: API actualizada
+      ansible.builtin.set_fact:
+        update_status: succeeded
+        update_health_status: "{{ health.status }}"
+
+  rescue:
+    - name: Guardar el error
+      ansible.builtin.set_fact:
+        update_status: failed
+        update_error: "{{ ansible_failed_task.name }}: {{ failed_detail | trim | truncate(300) }}"
+        update_health_status: "{{ health.status | default(0) }}"
+      vars:
+        # La última línea de stderr explica más que "non-zero return code".
+        failed_detail: >-
+          {{ (ansible_failed_result.stderr_lines | default([]) | select | list | last)
+             | default(ansible_failed_result.msg | default('error'), true) }}
+
+    - name: Volver a la release anterior
+      when: update_switched | bool
+      block:
+        - name: Restaurar backend-current → {{ from_release }}
+          ansible.builtin.shell: |
+            set -e
+            ln -sfn '{{ from_release }}' '{{ attendance_root }}/backend-current.new'
+            mv -Tf '{{ attendance_root }}/backend-current.new' '{{ attendance_root }}/backend-current'
+          changed_when: true
+
+        - name: Reiniciar la API anterior
+          ansible.builtin.systemd_service:
+            name: attendance-backend
+            state: restarted
+
+        - name: Comprobar la API anterior
+          ansible.builtin.uri:
+            url: "{{ update_health_url }}"
+            status_code: 200
+          register: rollback_health
+          until: rollback_health.status == 200
+          retries: 30
+          delay: 2
+          failed_when: false
+
+        - name: Resultado de la vuelta atrás
+          ansible.builtin.set_fact:
+            update_rolled_back: true
+            update_health_status: "{{ rollback_health.status }}"
+            update_status: "{{ 'rolled_back' if rollback_health.status == 200 else 'failed' }}"
+
+    # Que una release fallida no cuente como "reciente" al limpiar.
+    - name: Borrar la release que falló
+      ansible.builtin.file:
+        path: "{{ to_release }}"
+        state: absent
+      when: to_release != from_release   # en el rescue el enlace ya apunta a from_release
