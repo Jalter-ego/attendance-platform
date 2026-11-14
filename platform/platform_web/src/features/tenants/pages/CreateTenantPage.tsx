@@ -1,12 +1,10 @@
 // Wizard "Crear tenant" (P2, RF-03/RF-07): Datos y plan → Configuración → Revisión.
-// Registra la institución y, si el motor ya está conectado, encola la creación de la
-// infraestructura (operación create del worker).
+// El panel puede registrar un borrador o crear el tenant y encolar el trabajo juntos.
 import { useCallback, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/hooks/useAuth';
 import { tenantsService } from '../services/tenants.service';
-import { operationsService } from '../../operations/services/operations.service';
 import { engineNames } from '../types';
 import type { Engine, Plan, Tenant } from '../types';
 import { useResource } from '../../../hooks/useResource';
@@ -23,6 +21,7 @@ type Draft = {
   engine: Tenant['engine'];
   timezone: string;
   provision: boolean;
+  simulate_failure: boolean;
 };
 
 const STEPS = ['Datos y plan', 'Configuración', 'Revisión'];
@@ -74,7 +73,7 @@ function stepErrors(step: number, draft: Draft) {
     if (!draft.name.trim()) errors.name = 'Escribe el nombre de la institución.';
     if (!TENANT_ID.test(draft.tenant_id))
       errors.tenant_id = 'Usa 3–40 letras minúsculas, números o guiones (sin guion al inicio o al final).';
-    if (!EMAIL.test(draft.contact_email))
+    if (!EMAIL.test(draft.contact_email.trim()))
       errors.contact_email = 'Escribe un correo válido.';
   }
   if (step === 1 && !draft.timezone) errors.timezone = 'Elige una zona horaria.';
@@ -99,22 +98,27 @@ export function CreateTenantPage() {
     contact_email: '',
     region: REGIONS[0].code,
     env: 'test',
-    plan: 'standard',
+    plan: '',
     engine: 'terraform',
     timezone: 'America/La_Paz',
     provision: true,
+    simulate_failure: false,
   });
   if (user?.role !== 'platform_admin') return <Navigate to="/tenants" replace />;
 
-  const plan = plans.data?.items.find((item) => item.code === draft.plan);
+  const planCode = draft.plan || plans.data?.items.find((item) => item.code === 'standard')?.code || plans.data?.items[0]?.code;
+  const plan = plans.data?.items.find((item) => item.code === planCode);
   const engine: Engine | undefined = engines.data?.items.find((item) => item.code === draft.engine);
+  const isLocal = engines.data?.mode === 'local';
   const engineReady = Boolean(engine?.available);
+  const provisioning = draft.provision && engineReady;
   const errors = showErrors ? stepErrors(step, draft) : {};
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending || !plan || !engine) return;
     if (Object.keys(stepErrors(step, draft)).length) {
       setShowErrors(true);
       return;
@@ -127,21 +131,20 @@ export function CreateTenantPage() {
     setError('');
     setPending(true);
     try {
-      const { provision, ...input } = draft;
-      const tenant = await tenantsService.register({
-        ...input,
-        name: input.name.trim(),
-        contact_email: input.contact_email.trim(),
-      });
-      let creationError = '';
-      if (provision && engineReady) {
-        try {
-          await operationsService.infra(tenant.id, { type: 'create' });
-        } catch (error) {
-          creationError = `La institución se registró, pero no se pudo iniciar su instalación. ${error instanceof Error ? error.message : 'Revisa la configuración e inténtalo desde el detalle.'}`;
-        }
-      }
-      navigate(`/tenants/${tenant.id}`, { state: { creationError } });
+      const input = {
+        name: draft.name.trim(),
+        tenant_id: draft.tenant_id,
+        contact_email: draft.contact_email.trim(),
+        region: draft.region,
+        env: draft.env,
+        plan: plan.code,
+        engine: engine.code,
+        timezone: draft.timezone,
+      };
+      const tenant = provisioning
+        ? (await tenantsService.provision(isLocal ? { ...input, simulate_failure: draft.simulate_failure } : input)).tenant
+        : await tenantsService.register(input);
+      navigate(`/tenants/${tenant.id}`);
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -272,20 +275,25 @@ export function CreateTenantPage() {
               <section className="wizard-section">
                 <h2>Selecciona un plan</h2>
                 <p className="muted">El plan define la capacidad y los límites iniciales del tenant.</p>
-                {plans.error && <p className="alert error">{plans.error}</p>}
+                {plans.error && <>
+                  <p className="alert error" role="alert">{plans.error}</p>
+                  <button type="button" className="button" onClick={plans.reload}>Recargar planes</button>
+                </>}
+                {plans.loading && <p className="muted" role="status">Cargando planes…</p>}
+                {plans.data?.items.length === 0 && <p className="muted">Todavía no hay planes en el catálogo.</p>}
                 <div className="plan-cards" role="radiogroup" aria-label="Plan">
                   {plans.data?.items.map((item) => (
-                    <label key={item.code} className={`plan-card ${item.code === draft.plan ? 'selected' : ''}`}>
+                    <label key={item.code} className={`plan-card ${item.code === planCode ? 'selected' : ''}`}>
                       <input
                         type="radio"
                         name="plan"
                         value={item.code}
-                        checked={item.code === draft.plan}
+                        checked={item.code === planCode}
                         onChange={() => set('plan', item.code)}
                       />
                       <span className="plan-card-head">
                         <strong>{item.name}</strong>
-                        {item.code === draft.plan && <span className="badge">Seleccionado</span>}
+                        {item.code === planCode && <span className="badge">Seleccionado</span>}
                       </span>
                       <span className="muted">{item.description || PLAN_COPY[item.code] || ''}</span>
                       <ul>
@@ -303,7 +311,11 @@ export function CreateTenantPage() {
               <section className="wizard-section">
                 <h2>Motor de infraestructura</h2>
                 <p className="muted">Elige la herramienta que aprovisionará los recursos de este tenant.</p>
-                {engines.error && <p className="alert error">{engines.error}</p>}
+                {engines.error && <>
+                  <p className="alert error" role="alert">{engines.error}</p>
+                  <button type="button" className="button" onClick={engines.reload}>Recargar motores</button>
+                </>}
+                {engines.loading && <p className="muted" role="status">Cargando motores…</p>}
                 <div className="engine-options" role="radiogroup" aria-label="Motor de infraestructura">
                   {engines.data?.items.map((item) => (
                     <label key={item.code} className={`engine-option ${item.code === draft.engine ? 'selected' : ''}`}>
@@ -316,6 +328,7 @@ export function CreateTenantPage() {
                       />
                       <span>
                         <strong>{item.label}</strong>
+                        {isLocal && <span className="badge muted-badge">Simulado en local</span>}
                         {!item.available && <span className="badge muted-badge">Solo registro por ahora</span>}
                         <span className="muted">{ENGINE_COPY[item.code]}</span>
                       </span>
@@ -348,7 +361,9 @@ export function CreateTenantPage() {
               <section className="wizard-section">
                 <h2>Servidores del tenant</h2>
                 <p className="muted">
-                  Tres EC2 creadas desde las AMIs de Packer; cloud-init y Ansible las configuran al arrancar.
+                  {isLocal
+                    ? 'El entorno local simula los tres servidores con los tamaños del plan.'
+                    : 'Tres EC2 creadas desde las AMIs de Packer y configuradas por cloud-init y Ansible.'}
                 </p>
                 <table className="resource-table">
                   <thead>
@@ -436,13 +451,17 @@ export function CreateTenantPage() {
                     </dd>
                   </div>
                 </dl>
-                <button type="button" className="text-link as-button" onClick={() => setStep(0)}>
+                <button type="button" className="text-link as-button" onClick={() => setStep(0)} disabled={pending}>
                   Editar datos
                 </button>
               </section>
               <section className="wizard-section">
-                <h2>Qué se creará en AWS</h2>
-                <ul className="create-list">
+                <h2>{isLocal ? 'Qué se simulará en local' : 'Qué se creará en AWS'}</h2>
+                {isLocal ? <ul className="create-list">
+                  <li>Frontend {plan.sizing.frontend}, backend {plan.sizing.backend} y base de datos {plan.sizing.db}</li>
+                  <li>Disco de datos de {plan.sizing.db_disk_gb} GB</li>
+                  <li>Progreso, logs, versiones y URL de demostración en el detalle</li>
+                </ul> : <ul className="create-list">
                   <li>
                     3 EC2 (frontend {plan.sizing.frontend}, backend {plan.sizing.backend}, base de datos{' '}
                     {plan.sizing.db}) desde las AMIs de Packer
@@ -461,23 +480,34 @@ export function CreateTenantPage() {
                       Stack independiente para esta institución y entorno, con estado administrado por AWS.
                     </li>
                   )}
-                </ul>
+                </ul>}
                 <label className={`provision-toggle ${engineReady ? '' : 'disabled'}`}>
                   <input
                     type="checkbox"
-                    checked={draft.provision && engineReady}
+                    checked={provisioning}
                     disabled={!engineReady}
                     onChange={(event) => set('provision', event.target.checked)}
                   />
                   <span>
-                    <strong>Crear la infraestructura al confirmar</strong>
+                    <strong>{isLocal ? 'Simular el aprovisionamiento al confirmar' : 'Crear la infraestructura al confirmar'}</strong>
                     <span className="muted">
                       {engineReady
-                        ? 'Si lo desmarcas, solo se registra y podrás crearla desde el detalle.'
-                        : `${engine?.label ?? 'Este motor'} todavía no está conectado al worker: se guardará solo el registro.`}
+                        ? 'Si lo desmarcas, el tenant se guarda como borrador y podrás aprovisionarlo desde el detalle.'
+                        : engine?.message || `${engine?.label ?? 'Este motor'} permite registrar un borrador.`}
                     </span>
                   </span>
                 </label>
+                {isLocal && provisioning && <label className="provision-toggle fail-toggle">
+                  <input
+                    type="checkbox"
+                    checked={draft.simulate_failure}
+                    onChange={(event) => set('simulate_failure', event.target.checked)}
+                  />
+                  <span>
+                    <strong>Simular un fallo para probar el reintento</strong>
+                    <span className="muted">Podrás reintentar el trabajo desde el detalle del tenant.</span>
+                  </span>
+                </label>}
               </section>
             </>
           )}
@@ -491,7 +521,9 @@ export function CreateTenantPage() {
 
         <aside className="panel wizard-summary" aria-label="Resumen del tenant">
           <h2>Resumen del tenant</h2>
-          <p className="muted">Se aprovisionará al confirmar.</p>
+          <p className="muted">
+            {provisioning ? (isLocal ? 'Aprovisionamiento simulado.' : 'Se aprovisionará al confirmar.') : 'Registro como borrador.'}
+          </p>
           <div className="summary-institution">
             <span className="eyebrow">INSTITUCIÓN</span>
             <strong>{draft.name || 'Sin nombre'}</strong>
@@ -506,7 +538,7 @@ export function CreateTenantPage() {
             <li>Frontend y API{plan ? ` (${plan.sizing.frontend} / ${plan.sizing.backend})` : ''}</li>
             <li>Base de datos aislada{plan ? ` (${plan.sizing.db_disk_gb} GB)` : ''}</li>
             <li>{plan ? backupText(plan) : 'Respaldo según plan'}</li>
-            <li>Monitoreo en Grafana</li>
+            {!isLocal && <li>Monitoreo en Grafana</li>}
           </ul>
           <h3>Aislamiento y seguridad</h3>
           <p className="summary-safe">
@@ -540,12 +572,12 @@ export function CreateTenantPage() {
                 Atrás
               </button>
             )}
-            <button className="button primary" disabled={pending || !plans.data || !engines.data}>
+            <button className="button primary" disabled={pending || !plan || !engine}>
               {step < STEPS.length - 1
                 ? 'Continuar'
                 : pending
                   ? 'Creando…'
-                  : draft.provision && engineReady
+                  : provisioning
                     ? 'Crear tenant'
                     : 'Registrar tenant'}
               <Icon name="arrow" size={17} />

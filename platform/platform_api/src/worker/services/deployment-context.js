@@ -9,7 +9,8 @@ export function ensureActive(signal) {
 }
 
 export async function prepareDeploymentContext({ config, tenant, snapshot, operation, signal, report }) {
-  const directory = resolve(config.DEPLOYMENT_WORK_DIR, tenant.tenant_id, tenant.env, tenant.engine);
+  const directory = resolve(config.PLATFORM_WORK_ROOT || config.DEPLOYMENT_WORK_DIR || config.IAC_RUNS_DIR,
+    tenant.tenant_id, tenant.env, tenant.engine);
   ensureActive(signal);
   const version = snapshot.input.plan_version ? ` v${snapshot.input.plan_version}` : '';
   await report(`Preparando la configuración guardada de la instalación: plan ${snapshot.input.plan}${version}.`, { stage: 'Preparando instalación', progress: 5 });
@@ -29,7 +30,7 @@ export async function prepareDeploymentContext({ config, tenant, snapshot, opera
     signal, report, logRef: `operations/${operation.id}`,
     execute: (options) => runCommand({ ...options, cwd: directory, signal,
       env: { ...options.env,
-        ...Object.fromEntries(Object.keys(process.env).filter((key) => key.startsWith('TF_CLI_ARGS')).map((key) => [key, undefined])),
+        ...Object.fromEntries(Object.keys(process.env).filter((key) => /^TF_(?:CLI_ARGS|VAR_|WORKSPACE|DATA_DIR)/i.test(key)).map((key) => [key, undefined])),
         TF_WORKSPACE: 'default', TF_IN_AUTOMATION: '1', TF_INPUT: '0', TF_DATA_DIR: resolve(directory, '.terraform') },
       onLine: (line, stream) => report(line, { level: stream === 'stderr' ? 'warning' : 'info' }) }),
   };

@@ -2,25 +2,24 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AuthContext } from './auth-context';
 import { authService } from '../services/auth.service';
-import type { User } from '../types';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Awaited<ReturnType<typeof authService.me>> | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     const controller = new AbortController();
     authService
       .me(controller.signal)
-      .then(({ user }) => {
-        if (!controller.signal.aborted) setUser(user);
+      .then((session) => {
+        if (!controller.signal.aborted) setSession(session);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setUser(null);
+        if (!controller.signal.aborted) setSession(null);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-    const expired = () => setUser(null);
+    const expired = () => setSession(null);
     window.addEventListener('platform:unauthenticated', expired);
     return () => {
       controller.abort();
@@ -28,14 +27,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
   async function login(email: string, password: string) {
-    setUser((await authService.login(email, password)).user);
+    setSession(await authService.login(email, password));
   }
   async function logout() {
     await authService.logout();
-    setUser(null);
+    setSession(null);
   }
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user: session?.user ?? null, mode: session?.mode ?? null, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

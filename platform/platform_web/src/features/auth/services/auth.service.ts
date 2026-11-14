@@ -1,9 +1,11 @@
 import { api, post } from '../../../lib/api';
-import type { User } from '../types';
+import type { DeploymentMode, User } from '../types';
+
+type Session = { user: User; mode: DeploymentMode };
 
 export const authService = {
-  me: (signal?: AbortSignal) => api<{ user: User }>('/auth/me', { signal }),
+  me: (signal?: AbortSignal) => api<Session>('/auth/me', { signal }),
   login: (email: string, password: string) =>
-    post<{ user: User }>('/auth/login', { email, password }),
+    post<Session>('/auth/login', { email, password }),
   logout: () => post<void>('/auth/logout'),
 };

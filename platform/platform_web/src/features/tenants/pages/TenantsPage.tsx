@@ -10,7 +10,10 @@ import { StatusBadge } from '../../../components/StatusBadge';
 export function TenantsPage() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
-  const query = params.toString();
+  const filters = new URLSearchParams(params);
+  filters.set('exclude_deleted', 'true');
+  const query = filters.toString();
+  const catalog = useResource('plans:tenant-filter', tenantsService.plans);
   const fetcher = useCallback(
     (signal: AbortSignal) => tenantsService.list(query, signal),
     [query],
@@ -87,6 +90,11 @@ export function TenantsPage() {
             <option value="ready">Disponible</option>
             <option value="suspended">Suspendida</option>
             <option value="failed">Fallida</option>
+            <option value="deleted">Eliminada</option>
+          </select>
+          <select aria-label="Filtrar plan" value={params.get('plan') || ''} onChange={(event) => filter('plan', event.target.value)}>
+            <option value="">Todos los planes</option>
+            {catalog.data?.items.map((plan) => <option key={plan.code} value={plan.code}>{plan.name}</option>)}
           </select>
           <select
             aria-label="Filtrar entorno"

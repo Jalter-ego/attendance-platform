@@ -162,6 +162,7 @@
 .profile {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 11px;
   font-size: 0.74rem;
   font-weight: 600;
@@ -173,6 +174,12 @@
   font-weight: 400;
   margin-top: 4px;
   color: var(--muted);
+}
+.profile > span:not(.avatar) {
+  overflow-wrap: anywhere;
+}
+.profile > .icon-button {
+  flex-shrink: 0;
 }
 .avatar,
 .institution-avatar {
@@ -280,6 +287,7 @@
   outline: none;
 }
 .table-scroll {
+  position: relative;
   overflow-x: auto;
 }
 table {
@@ -458,7 +466,7 @@ tbody tr:hover {
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 22px;
 }
 .form-grid input,
@@ -467,7 +475,7 @@ tbody tr:hover {
   width: 100%;
 }
 .form-grid.three-columns {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .form-divider {
   border-top: 1px solid var(--border);
@@ -476,6 +484,7 @@ tbody tr:hover {
 }
 .form-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
   margin-top: 25px;
@@ -485,7 +494,7 @@ tbody tr:hover {
 }
 .detail-grid {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
   gap: 22px;
 }
 .detail-summary,
@@ -537,6 +546,7 @@ dt {
 }
 dd {
   margin: 0;
+  overflow-wrap: anywhere;
   text-align: right;
 }
 .detail-links {
@@ -858,15 +868,18 @@ progress::-moz-progress-bar {
     display: block;
   }
   .sidebar {
-    padding: 18px 20px;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
+    padding: 14px 20px;
+    align-items: stretch;
+    gap: 12px;
   }
   .sidebar .brand {
     padding: 0;
     font-size: 1.1rem;
+  }
+  .sidebar nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+    gap: 3px;
   }
   .nav-caption,
   .sidebar-bottom,
@@ -874,7 +887,9 @@ progress::-moz-progress-bar {
     display: none;
   }
   .sidebar nav a {
-    padding: 10px;
+    min-height: 40px;
+    justify-content: center;
+    padding: 8px 6px;
     font-size: 0.73rem;
   }
   .topbar {
@@ -909,11 +924,11 @@ progress::-moz-progress-bar {
     flex-basis: 100%;
   }
   .detail-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .form-grid,
   .form-grid.three-columns {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .registration-form {
     padding: 22px;
@@ -943,6 +958,48 @@ progress::-moz-progress-bar {
   }
   .log-line {
     gap: 10px;
+  }
+}
+@media (max-width: 420px) {
+  .sidebar,
+  .topbar,
+  .workspace main,
+  .workspace footer {
+    padding-inline: 15px;
+  }
+  .sidebar nav {
+    grid-template-columns: repeat(auto-fit, minmax(5.8rem, 1fr));
+  }
+  .panel-heading,
+  .section-heading,
+  .pagination,
+  .page-heading {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .page-heading h1,
+  .page-heading p,
+  .alert {
+    overflow-wrap: anywhere;
+  }
+  .detail-summary,
+  .integration-card,
+  .operation-panel,
+  .infra-panel {
+    padding: 16px;
+  }
+  .workspace .plan-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plan-tile header,
+  .plan-actions {
+    flex-wrap: wrap;
+  }
+  .plan-code {
+    overflow-wrap: anywhere;
+  }
+  .plan-dialog-backdrop .plan-dialog {
+    padding: 16px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
