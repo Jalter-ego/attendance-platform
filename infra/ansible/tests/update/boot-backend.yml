@@ -1,0 +1,10 @@
+---
+# Corre SOLO el rol boot_backend en la VM simulada (e2e.sh), como lo haría attendance-boot al
+# reejecutarse. Sin el cambio de hostname de boot.yml (no aplica en un contenedor).
+- name: boot_backend en la VM simulada
+  hosts: all
+  connection: local
+  become: true
+  gather_facts: true
+  roles:
+    - boot_backend
