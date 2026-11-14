@@ -1,4 +1,4 @@
-# Red compartida — P1, A5
+# Infraestructura compartida — P1, A5
 
 Este bloque utiliza el bucket ya creado por `infra/bootstrap/`, con una clave de estado diferente: `platform/base/terraform.tfstate`.
 
@@ -6,13 +6,14 @@ Prepara:
 
 - Una VPC con DNS, una subred pública y una privada en una misma zona de disponibilidad.
 - Internet Gateway y una tabla de rutas pública; una tabla independiente para la subred privada.
-- Security groups para el constructor de Packer y para el futuro servidor de monitoreo.
+- Security groups para el constructor de Packer y para el servidor de monitoreo.
 - Rol/perfil de EC2 que permitirá a Prometheus descubrir instancias mediante consultas de lectura a AWS.
 - Endpoint privado de Parameter Store (SSM), con HTTPS desde la VPC y lectura limitada a `/tenants/*`.
 - Respaldos de P3: otro bucket S3 para dumps, endpoint gateway de S3, dos endpoints del agente SSM y tres políticas DLM para snapshots de datos.
+- Una EC2 opcional de Prometheus/Grafana desde la AMI `monitoring` de P3, con administración por SSM.
 - El output `integration`, con los IDs que usarán P2, P3, P5 y P6.
 
-La EC2 de monitoreo se creará después, cuando P3 entregue su AMI y P5 tenga su configuración. Las tres EC2 de cada tenant tendrán otro módulo y otro estado. Por eso A5 queda parcialmente implementado en este bloque.
+La EC2 de monitoreo se habilita con `monitoring`; sin ese bloque su valor es `null` y solo se crea la infraestructura compartida anterior. La imagen de P3 ya incluye Prometheus y Grafana; P5 aporta el descubrimiento de tenants, dashboards y alertas. Las tres EC2 de cada tenant tienen otro módulo y otro estado.
 
 ## Cuenta AWS y acceso a servidores
 
@@ -54,9 +55,45 @@ terraform -chdir=infra/terraform/base apply ../../../.local/base.tfplan
 terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json
 ```
 
-Revisa el plan antes de aplicar. Este bloque no contiene instancias ni NAT Gateway. Con la extensión de respaldos hay tres endpoints Interface (`ssm`, `ec2messages`, `ssmmessages`), con [costo por hora y tráfico](https://aws.amazon.com/privatelink/pricing/) compartido entre los tenants, además del endpoint gateway de S3.
+Revisa el plan antes de aplicar. Sin `monitoring` no se crea ninguna EC2; al habilitarlo se añade una instancia compartida. No hay NAT Gateway. Con la extensión de respaldos hay tres endpoints Interface (`ssm`, `ec2messages`, `ssmmessages`), con [costo por hora y tráfico](https://aws.amazon.com/privatelink/pricing/) compartido entre los tenants, además del endpoint gateway de S3.
 
 Si ya creaste la base anterior, genera un plan nuevo con este código. Debe añadir el SG de SSM, su regla HTTPS y el endpoint, sin reemplazar la VPC/subredes. No reutilices el plan anterior. Después de aplicarlo, vuelve a exportar `integration`: ahora incluye `ssm_endpoint_id`.
+
+## Habilitar la EC2 de monitoreo
+
+En `.local/base.tfvars`, conserva la configuración actual y añade el bloque con el ID de `ami.monitoring` en `infra/packer/ami-ids.json`. Para el conjunto 0.2.2 en `us-east-2`:
+
+```hcl
+monitoring = {
+  ami_id              = "ami-05292ee00805baf20"
+  instance_type       = "t3.small"
+  root_volume_size_gb = 20
+}
+```
+
+El módulo valida que la AMI esté disponible, pertenezca a la cuenta y tenga `Role=monitoring`, arquitectura x86_64 y raíz EBS. Su ID queda fijado: publicar otra AMI no cambia esta instancia automáticamente. El tamaño predeterminado es `t3.small`, con disco gp3 cifrado de 20 GiB e IMDSv2. Los créditos de CPU usan modo `standard`; al agotarlos baja el rendimiento a la línea base en lugar de usar créditos excedentes de modo unlimited. Ver [el modo standard de AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances-standard-mode.html).
+
+La EC2 usa la subred pública y solicita IP pública para consultar la API de AWS. Reutiliza el SG y el perfil IAM de monitoreo. El arranque habilita Prometheus, Grafana y el agente SSM que ya vienen instalados; no descarga paquetes ni ejecuta la plantilla de un tenant. Se añade una política del agente, sin lectura de secretos de Parameter Store, para que P5 pueda configurarla con Run Command. La identidad que envía los comandos necesita sus propios permisos de operador.
+
+Desde la raíz del repositorio:
+
+```bash
+export AWS_PROFILE=attendance-terraform
+terraform -chdir=infra/terraform/base plan -input=false -lock-timeout=5m -var-file=../../../.local/base.tfvars -out=../../../.local/base-monitoring.tfplan
+python3 infra/terraform/plan_preview.py --directory infra/terraform/base --plan .local/base-monitoring.tfplan
+terraform -chdir=infra/terraform/base apply -lock-timeout=5m ../../../.local/base-monitoring.tfplan
+terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json
+```
+
+Sobre la base anterior ya aplicada, y sin modificar `operator_cidrs`, el plan debe añadir **una EC2 y una política IAM**, sin reemplazar la red ni recursos existentes. Aplicarlo inicia el uso facturable de EC2, EBS e IP pública. Revisa el plan nuevo antes de aplicar; los planes de respaldos anteriores no incluyen esta instancia.
+
+Comparte este mismo bloque con quien aplique la base: todos administran el mismo estado. Quitar `monitoring` o ponerlo en `null` después de crearla planifica eliminar la EC2 y su disco. Cambiar AMI/cloud-init puede reemplazarla y perder el historial de métricas del disco raíz; dashboards y configuración deben quedar en código con P5.
+
+`integration` añade `monitoring_instance_id`, `monitoring_private_ip`, `monitoring_public_ip` y `grafana_url`; sin instancia son `null`. La URL será `http://<ip-publica>:3000`. Con `operator_cidrs=[]` el acceso de red a Grafana sigue cerrado aunque exista una URL: añade las IPs autorizadas al aplicar la base cuando el equipo vaya a usarlo. No se abre Prometheus (9090) a Internet. Una parada/arranque puede cambiar la IP; vuelve a consultar los outputs.
+
+P5 recibe ese archivo y configura el descubrimiento EC2 por etiquetas, los scrapes, el datasource local `http://127.0.0.1:9090`, dashboards y alertas. La AMI solo trae una configuración inicial de Prometheus que se consulta a sí mismo; crear la EC2 no significa que ya se estén monitoreando los tenants. Después del apply, comprobar SSM `Online`, servicios y salud de Grafana/Prometheus antes de dar A5/P5 por integrado.
+
+Verificación del 14/11/2026: plan revisado de 2 altas, 0 modificaciones y 0 eliminaciones aplicado; agente SSM Online, cloud-init terminado, Prometheus ready y Grafana con database=ok comprobados dentro de la EC2. El plan posterior dio No changes. Falta configurar observabilidad con P5 y autorizar las IPs de acceso; los outputs locales ya están actualizados.
 
 ## Actualización de respaldos (PR #5)
 
@@ -76,7 +113,7 @@ Revisar los recursos y permisos, además de los totales. Solo una persona ejecut
 
 DLM selecciona volúmenes por una única etiqueta compuesta: `BackupPolicy=attendance-platform:weekly-28d` (o `daily-14d` / `daily-30d`). El módulo tenant usa el mismo formato. Añadir otra etiqueta `Project` al selector no serviría como filtro conjunto: [DLM combina las etiquetas de destino con OR](https://docs.aws.amazon.com/ebs/latest/userguide/dlm-elements.html#dlm-target-tags).
 
-Aplicar la base prepara la infraestructura de respaldos. P3 todavía debe publicar la AMI de BD 0.2.0 con los scripts y el arranque actualizados, y probar respaldo/restauración. Las AMIs 0.1.2 registradas no incluyen esa extensión. RF-19 sigue siendo opcional; para probar solo Attendance con 0.1.2, el tenant puede mantener `base.backups_bucket=""`.
+Aplicar la base prepara la infraestructura de respaldos. P3 ya publicó el conjunto 0.2.2 y reportó respaldo/restauración satisfactorios, también desde la plataforma. Usar los IDs de `infra/packer/ami-ids.json` al crear instalaciones nuevas; publicar otra AMI no exige volver a aplicar esta base. RF-19 sigue siendo opcional; `base.backups_bucket=""` en el tenant desactiva sus permisos de respaldos y actualización por S3/SSM.
 
 La última orden guarda los IDs, sin credenciales, en un archivo local que puedes compartir con quienes integran Packer, los adaptadores y el worker. Los otros clones inicializan este mismo backend antes de planificar; no crean una red nueva por persona.
 
@@ -90,7 +127,7 @@ Antes del primer build SSH, P1 debe añadir las IPs públicas autorizadas a `ope
 
 La subred privada no tiene salida a Internet. El endpoint `com.amazonaws.<region>.ssm`, con DNS privado, permite que AWS CLI lea Parameter Store desde backend/BD. Las AMIs de P3 deben traer todo instalado; este acceso no permite descargar paquetes ni repositorios durante el primer arranque.
 
-La lectura de parámetros usa la clave administrada `alias/aws/ssm`. La extensión de respaldos añade los canales del agente y permisos en la EC2 DB para Run Command; su funcionamiento se verificará con la nueva AMI de P3. Una clave KMS propia necesitaría permisos adicionales. El SG permite HTTPS dentro de la VPC y las políticas IAM por tenant limitan qué parámetros puede leer cada EC2.
+La lectura de parámetros usa la clave administrada `alias/aws/ssm`. La extensión de respaldos añade los canales del agente y permisos en la EC2 DB para Run Command; P3 reportó su funcionamiento con las AMIs actuales. El módulo tenant también prepara esos permisos de agente y lectura de releases en frontend/backend para P4. Una clave KMS propia necesitaría permisos adicionales. El SG permite HTTPS dentro de la VPC y las políticas IAM por tenant limitan qué parámetros puede leer cada EC2.
 
 Las reglas de backend→BD y de monitoreo→exporters serán SG propios por tenant, definidos en el siguiente módulo. Compartir VPC/subredes no sustituye ese aislamiento.
 
@@ -102,6 +139,6 @@ terraform -chdir=infra/terraform/base validate
 terraform -chdir=infra/terraform/base test
 ```
 
-Las seis pruebas simulan AWS. Revisan DNS, separación de subredes/rutas, accesos cerrados por defecto, autorización de IPs concretas, permisos de descubrimiento de Prometheus, acceso privado a Parameter Store y aislamiento de respaldos. No prueban conectividad real ni crean la VPC.
+Las once pruebas simulan AWS. Revisan DNS, separación de subredes/rutas, accesos cerrados por defecto, autorización de IPs concretas, permisos de descubrimiento de Prometheus, acceso privado a Parameter Store y aislamiento de respaldos. También cubren la EC2 de monitoreo, arranque, cifrado/IMDSv2, permisos del agente sin secretos, outputs y rechazo de AMI/tamaño/disco incompatibles. No prueban conectividad real ni crean recursos en AWS.
 
 Referencias: [Internet Gateway y subredes](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html), [conectividad privada de SSM](https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-create-vpc.html), [descubrimiento EC2 de Prometheus](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config).

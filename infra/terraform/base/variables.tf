@@ -39,3 +39,34 @@ variable "operator_cidrs" {
     error_message = "Usa CIDR IPv4 /24 o más específicos, normalmente una IP pública seguida de /32."
   }
 }
+
+variable "monitoring" {
+  description = "EC2 compartida de Prometheus/Grafana desde la AMI de P3. null mantiene solo la red; no crea servidores."
+  type = object({
+    ami_id              = string
+    instance_type       = optional(string, "t3.small")
+    root_volume_size_gb = optional(number, 20)
+  })
+  default = null
+
+  validation {
+    condition = var.monitoring == null ? true : (
+      can(regex("^ami-[a-f0-9]{17}$", var.monitoring.ami_id)) &&
+      var.monitoring.ami_id != "ami-00000000000000000"
+    )
+    error_message = "Usa el ID concreto de la AMI monitoring de P3, de esta cuenta y region."
+  }
+
+  validation {
+    condition     = var.monitoring == null ? true : contains(["t3.micro", "t3.small", "t3.medium", "t3.large"], var.monitoring.instance_type)
+    error_message = "La AMI de monitoreo es x86_64: usa t3.micro, t3.small, t3.medium o t3.large."
+  }
+
+  validation {
+    condition = var.monitoring == null ? true : (
+      var.monitoring.root_volume_size_gb >= 12 &&
+      floor(var.monitoring.root_volume_size_gb) == var.monitoring.root_volume_size_gb
+    )
+    error_message = "El disco de monitoreo debe tener al menos 12 GiB, en un numero entero."
+  }
+}

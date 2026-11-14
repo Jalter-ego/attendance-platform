@@ -2,7 +2,7 @@
 
 La infraestructura compartida y la de cada tenant tendrán estados distintos.
 
-- `base/`: red compartida, SG para Packer/monitoreo y perfil de la futura EC2 de Prometheus.
+- `base/`: red compartida, SG para Packer/monitoreo, respaldos y EC2 opcional compartida de Prometheus/Grafana. Ver [cómo habilitar monitoreo](base/README.md#habilitar-la-ec2-de-monitoreo).
 - `tenant/`: tres EC2 por cliente, sus SG, perfiles SSM y disco de datos; permite suspender/reanudar conservando los discos y consume los outputs de `base/`. Ver [las instrucciones del tenant](tenant/README.md).
 
 El bucket se administra desde `infra/bootstrap/`. Borrar un tenant no debe eliminar ni el bucket ni la red compartida.
