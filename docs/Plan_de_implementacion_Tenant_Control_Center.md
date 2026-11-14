@@ -1,12 +1,15 @@
 # Plan de implementación — Plataforma de Tenants (Tenant Control Center)
 
 > Proyecto final · equipo de 6 personas · AWS como nube principal
+> Basado en: *Requisitos del proyecto final v2*, el mockup "Crear tenant" y las pautas dadas por el docente en la última clase del módulo (Packer + observabilidad + demo del proyecto).
 
 ---
 
 ## 0. Resumen y supuestos
 
 **Qué se construye:** una plataforma local (React + API + worker) que permite elegir un plan, crear un *tenant* (una institución) y aprovisionar en AWS **3 servidores EC2 por tenant (frontend, backend, base de datos)** usando Packer → Terraform/OpenTofu (o Pulumi / CloudFormation) → cloud-init → Ansible. Cada tenant queda monitoreado en Grafana y se gestiona durante todo su ciclo de vida (actualizar, suspender, reanudar, cambiar de plan, respaldar, restaurar, eliminar).
+
+**Supuestos (confirmar en el kickoff):**
 
 1. **Cloud:** solo AWS. El docente confirmó que alcanza con AWS (Azure es opcional, no lo planificamos).
 2. **Fecha de entrega:** el docente dijo que el siguiente módulo arranca el lunes y que "el domingo ya deberían estar con esto". Hoy es jueves 12-nov-2026, así que el plan asume **entrega el domingo 15-nov** (≈3,5 días). Si la fecha real es posterior, se alarga la Fase 2 y no cambia el reparto. **Confirmar la fecha con el docente hoy.**

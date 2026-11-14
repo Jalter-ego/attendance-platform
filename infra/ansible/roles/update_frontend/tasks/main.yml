@@ -1,0 +1,172 @@
+---
+# Cambia el build que sirve nginx. /var/www/attendance pasa a ser un enlace a la release
+# activa; la primera vez se guarda el build horneado en la AMI como release anterior.
+# Deja los mismos hechos update_* que update_backend.
+
+- name: Estado actual del sitio
+  ansible.builtin.stat:
+    path: "{{ web_root }}"
+  register: web_current
+
+- name: Validar que la VM sirve la app
+  ansible.builtin.assert:
+    that: web_current.stat.exists and (web_current.stat.isdir or web_current.stat.islnk)
+    fail_msg: "No existe {{ web_root }}: ¿es una VM frontend de la AMI?"
+
+# Una sola vez por VM: el build horneado deja de ser carpeta y pasa a ser una release.
+- name: Convertir el build horneado en release
+  when: not web_current.stat.islnk
+  block:
+    - name: Commit horneado (image.json)
+      ansible.builtin.slurp:
+        src: "{{ attendance_etc }}/image.json"
+      register: image_json_raw
+
+    - name: Nombre de la release horneada
+      ansible.builtin.set_fact:
+        baked_release: >-
+          {{ releases_dir }}/frontend-{{ ((image_json_raw.content | b64decode | from_json).frontend_commit
+             | default('', true))[:12] or 'horneado' }}
+
+    # mv y ln seguidos: el sitio queda sin raíz unos milisegundos, solo esta vez.
+    - name: Mover el build horneado y enlazar {{ web_root }}
+      ansible.builtin.shell: |
+        set -e
+        mv -T '{{ web_root }}' '{{ baked_release }}'
+        ln -s '{{ baked_release }}' '{{ web_root }}'
+      args:
+        creates: "{{ baked_release }}"
+      register: baked_conversion
+
+- name: Enlace actual del sitio
+  ansible.builtin.stat:
+    path: "{{ web_root }}"
+  register: web_link
+
+- name: Versiones de origen y destino
+  ansible.builtin.set_fact:
+    from_release: "{{ web_link.stat.lnk_source }}"
+    to_release: "{{ releases_dir }}/frontend-{{ manifest.version }}"
+    update_from: "{{ web_link.stat.lnk_source | basename | regex_replace('^frontend-', '') }}"
+    update_to: "{{ manifest.version }}"
+    update_health_url: "http://127.0.0.1/"
+    update_health_status: 0
+    update_switched: false
+    update_rolled_back: false
+    update_error: ""
+
+- name: Actualizar el frontend
+  block:
+    - name: Dejar la release en {{ to_release }}
+      when: to_release != from_release
+      block:
+        - name: Quitar una copia previa de la misma versión (no es la activa)
+          ansible.builtin.file:
+            path: "{{ to_release }}"
+            state: absent
+
+        - name: Mover el build del paquete
+          ansible.builtin.command:
+            argv: [mv, -T, "{{ release_stage }}/app", "{{ to_release }}"]
+          changed_when: true
+
+        # nginx (www-data) solo lee; nadie más que root escribe.
+        - name: Permisos de la release
+          ansible.builtin.shell: |
+            set -e
+            chown -R root:root '{{ to_release }}'
+            chmod -R u=rwX,go=rX '{{ to_release }}'
+          changed_when: true
+
+    - name: El paquete trae index.html
+      ansible.builtin.slurp:
+        src: "{{ to_release }}/index.html"
+      register: expected_index
+
+    - name: Cambiar {{ web_root }} a la release nueva (atómico)
+      ansible.builtin.shell: |
+        set -e
+        ln -sfn '{{ to_release }}' '{{ web_root }}.new'
+        mv -Tf '{{ web_root }}.new' '{{ web_root }}'
+        touch '{{ to_release }}'
+      when: to_release != from_release
+      changed_when: true
+
+    - name: Marcar que hubo cambio de enlace
+      ansible.builtin.set_fact:
+        update_switched: "{{ to_release != from_release }}"
+
+    - name: Validar nginx
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Recargar nginx
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: reloaded
+
+    # /healthz es una respuesta fija de nginx: no prueba el build. Se compara la portada.
+    - name: La portada es la de la release nueva
+      ansible.builtin.uri:
+        url: "{{ update_health_url }}"
+        return_content: true
+        headers:
+          Cache-Control: no-cache
+      register: health
+      until: health.status == 200 and health.content == (expected_index.content | b64decode)
+      retries: 10
+      delay: 2
+
+    - name: Frontend actualizado
+      ansible.builtin.set_fact:
+        update_status: succeeded
+        update_health_status: "{{ health.status }}"
+
+  rescue:
+    - name: Guardar el error
+      ansible.builtin.set_fact:
+        update_status: failed
+        update_error: "{{ ansible_failed_task.name }}: {{ failed_detail | trim | truncate(300) }}"
+        update_health_status: "{{ health.status | default(0) }}"
+      vars:
+        failed_detail: >-
+          {{ (ansible_failed_result.stderr_lines | default([]) | select | list | last)
+             | default(ansible_failed_result.msg | default('error'), true) }}
+
+    - name: Volver a la release anterior
+      when: update_switched | bool
+      block:
+        - name: Restaurar {{ web_root }} → {{ from_release }}
+          ansible.builtin.shell: |
+            set -e
+            ln -sfn '{{ from_release }}' '{{ web_root }}.new'
+            mv -Tf '{{ web_root }}.new' '{{ web_root }}'
+          changed_when: true
+
+        - name: Recargar nginx con la release anterior
+          ansible.builtin.systemd_service:
+            name: nginx
+            state: reloaded
+          failed_when: false
+
+        - name: Comprobar la portada anterior
+          ansible.builtin.uri:
+            url: "{{ update_health_url }}"
+          register: rollback_health
+          until: rollback_health.status == 200
+          retries: 10
+          delay: 2
+          failed_when: false
+
+        - name: Resultado de la vuelta atrás
+          ansible.builtin.set_fact:
+            update_rolled_back: true
+            update_health_status: "{{ rollback_health.status }}"
+            update_status: "{{ 'rolled_back' if rollback_health.status == 200 else 'failed' }}"
+
+    # Que una release fallida no cuente como "reciente" al limpiar.
+    - name: Borrar la release que falló
+      ansible.builtin.file:
+        path: "{{ to_release }}"
+        state: absent
+      when: to_release != from_release   # en el rescue el enlace ya apunta a from_release
