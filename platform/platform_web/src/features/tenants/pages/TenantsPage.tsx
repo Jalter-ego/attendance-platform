@@ -161,7 +161,7 @@ export function TenantsPage() {
                         </span>
                       </Link>
                     </td>
-                    <td>{planNames[tenant.plan]}</td>
+                    <td>{tenant.plan_snapshot?.name ?? planNames[tenant.plan] ?? tenant.plan}</td>
                     <td>
                       <span className="environment-label">
                         {tenant.env === 'test' ? 'Pruebas' : 'Producción'}

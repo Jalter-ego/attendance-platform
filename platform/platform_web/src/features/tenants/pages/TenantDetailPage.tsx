@@ -106,7 +106,7 @@ export function TenantDetailPage() {
           <dl>
             <div>
               <dt>Plan</dt>
-              <dd>{planNames[data.plan]}</dd>
+              <dd>{data.plan_snapshot?.name ?? planNames[data.plan] ?? data.plan}</dd>
             </div>
             <div>
               <dt>Motor</dt>

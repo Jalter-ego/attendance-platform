@@ -286,7 +286,7 @@ export function CreateTenantPage() {
                         <strong>{item.name}</strong>
                         {item.code === draft.plan && <span className="badge">Seleccionado</span>}
                       </span>
-                      <span className="muted">{PLAN_COPY[item.code]}</span>
+                      <span className="muted">{item.description || PLAN_COPY[item.code] || ''}</span>
                       <ul>
                         <li>Hasta {item.limits.max_students?.toLocaleString('es-BO') ?? '∞'} estudiantes</li>
                         <li>

@@ -27,6 +27,7 @@ export const deploymentSnapshot = z.object({
   version: z.literal(1),
   input: tenantInput.extend({ base: baseSchema, sizing, limits, ami: amiSchema, suspended: z.literal(false),
     backup: z.object({ schedule: z.enum(['daily', 'weekly']), retention_days: z.number().int().positive() }).nullable().optional(),
+    plan_version: z.number().int().positive().nullable().optional(),
   }),
   backend: z.union([
     z.object({ bucket, region: z.string(), key: z.string(), encrypt: z.literal(true), use_lockfile: z.literal(true) }),
@@ -66,13 +67,18 @@ export async function buildSnapshot(tenant, plan, config) {
     ]);
     const base = rawBase?.integration?.value ?? rawBase;
     if (catalog.region !== tenant.region) throw new Error('AMI region mismatch');
+    // P4 congela el plan al registrar; P6 congela además red, AMIs y estado al encolar.
+    // Una edición del catálogo entre ambos pasos no debe cambiar esta institución.
+    const source = tenant.plan_snapshot ?? plan;
+    if (!source || (source.code && source.code !== tenant.plan)) throw new Error('Plan identity mismatch');
     return validateSnapshot({
       version: 1,
       input: { ...tenantInput.parse({
         tenant_id: tenant.tenant_id, name: tenant.name, env: tenant.env, region: tenant.region,
         plan: tenant.plan, engine: tenant.engine, contact_email: tenant.contact_email, timezone: tenant.timezone,
-      }), base, sizing: plan.sizing, limits: plan.limits, ami: catalog.ami, suspended: false,
-        backup: BACKUP_BY_PLAN[tenant.plan] ?? null },
+      }), base, sizing: source.sizing, limits: source.limits ?? {}, ami: catalog.ami, suspended: false,
+        backup: source.backup ?? BACKUP_BY_PLAN[tenant.plan] ?? null,
+        plan_version: source.version ?? null },
       backend: tenant.engine === 'cloudformation'
         ? { type: 'cloudformation', region: tenant.region, stack_name: `${base.project_name}-${tenant.tenant_id}-${tenant.env}` }
         : { bucket: config.DEPLOYMENT_STATE_BUCKET, region: tenant.region,

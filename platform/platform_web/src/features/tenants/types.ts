@@ -9,7 +9,8 @@ export interface Tenant {
   region: string;
   env: 'test' | 'prod';
   engine: 'terraform' | 'tofu' | 'pulumi' | 'cloudformation';
-  plan: 'basic' | 'standard' | 'advanced';
+  plan: string;
+  plan_snapshot?: { code: string; name: string; version: number };
   status: string;
   created_at: string;
 }
@@ -32,6 +33,8 @@ export interface TenantDetail extends Tenant {
 export interface Plan {
   code: Tenant['plan'];
   name: string;
+  description: string;
+  version: number;
   sizing: { frontend: string; backend: string; db: string; db_disk_gb: number };
   limits: { max_students?: number; max_teachers?: number; max_courses?: number };
   backup: { schedule: 'weekly' | 'daily'; retention_days: number } | null;
@@ -42,7 +45,7 @@ export interface Engine {
   label: string;
   available: boolean;
 }
-export const planNames = {
+export const planNames: Record<string, string> = {
   basic: 'Básico',
   standard: 'Estándar',
   advanced: 'Avanzado',

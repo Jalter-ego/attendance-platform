@@ -11,7 +11,8 @@ export function ensureActive(signal) {
 export async function prepareDeploymentContext({ config, tenant, snapshot, operation, signal, report }) {
   const directory = resolve(config.DEPLOYMENT_WORK_DIR, tenant.tenant_id, tenant.env, tenant.engine);
   ensureActive(signal);
-  await report('Preparando la configuración guardada de la instalación.', { stage: 'Preparando instalación', progress: 5 });
+  const version = snapshot.input.plan_version ? ` v${snapshot.input.plan_version}` : '';
+  await report(`Preparando la configuración guardada de la instalación: plan ${snapshot.input.plan}${version}.`, { stage: 'Preparando instalación', progress: 5 });
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const nativeStack = snapshot.backend.type === 'cloudformation';
   const variableFile = nativeStack ? undefined : resolve(directory, 'tenant.tfvars.json');

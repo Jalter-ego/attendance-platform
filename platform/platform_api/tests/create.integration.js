@@ -59,7 +59,7 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
           [operationId, tenantId, legacy === '003_engines.sql' ? 'suspend' : 'create', userId]);
         await pool.query("INSERT INTO deployments(id,tenant_id,operation_id,engine,resources) VALUES ($1,$2,$3,'terraform','[{\"id\":\"i-existing\"}]')", [savedId, tenantId, operationId]);
       }
-      assert.equal(await migrate(pool), legacy ? 2 : 5);
+      assert.equal(await migrate(pool), legacy ? 3 : 6);
       assert.equal(await migrate(pool), 0, 'repetir no modifica nada');
       if (savedId) {
         const saved = (await pool.query('SELECT * FROM deployments WHERE id=$1', [savedId])).rows[0];

@@ -4,7 +4,9 @@
 import { readFile } from 'node:fs/promises';
 import { OperationError } from '../worker/errors.js';
 
-// Respaldo por plan, admitido por infra/terraform/tenant (variable "backup").
+// Respaldo por plan, admitido por infra/terraform/tenant (variable "backup"). Desde la
+// migración 004 el respaldo vive en plans.backup y en la copia del tenant; esto queda solo
+// como respaldo para un plan sin esa columna.
 export const BACKUP_BY_PLAN = {
   basic: { schedule: 'weekly', retention_days: 28 },
   standard: { schedule: 'daily', retention_days: 14 },
@@ -94,7 +96,11 @@ export async function buildTenantInput(config, tenant, plan, { suspended }) {
       'IAC_INPUT',
       `Las AMIs son de ${images.region}; el tenant usa ${tenant.region}.`,
     );
-  if (!plan)
+  // P4: se despliega la COPIA del plan guardada en el tenant (migración 004), no el plan
+  // vigente. Si alguien edita el plan, los suspend/resume de este tenant no cambian sus
+  // límites ni su user_data (cambiarlo recrearía sus EC2).
+  const source = tenant.plan_snapshot ?? plan;
+  if (!source)
     throw new OperationError('IAC_INPUT', `El plan ${tenant.plan} no existe en el catálogo.`);
   return {
     tenant_id: tenant.tenant_id,
@@ -105,9 +111,10 @@ export async function buildTenantInput(config, tenant, plan, { suspended }) {
     engine: tenant.engine,
     contact_email: tenant.contact_email,
     timezone: tenant.timezone,
-    sizing: plan.sizing,
-    limits: plan.limits ?? {},
-    backup: BACKUP_BY_PLAN[tenant.plan] ?? BACKUP_BY_PLAN.basic,
+    sizing: source.sizing,
+    limits: source.limits ?? {},
+    backup: source.backup ?? BACKUP_BY_PLAN[tenant.plan] ?? BACKUP_BY_PLAN.basic,
+    plan_version: source.version ?? null,
     ami: images.ami,
     suspended,
     base,
