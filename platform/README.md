@@ -111,7 +111,7 @@ platform_web/src/
   lib/                       Cliente HTTP
 ```
 
-- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Pendiente: wizard de 3 pasos, Pulumi y CloudFormation. Registrar no equivale a aprovisionar.
+- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. Pendiente: Pulumi y CloudFormation. Registrar no equivale a aprovisionar.
 - **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
 - **P3/P4/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`. El catálogo inicial se consulta desde la API; P4 puede ampliarlo mediante nuevas migraciones y sus endpoints.
 - **P6:** el ejecutor común y el servicio SSM ya están conectados al flujo de creación de P2 (`src/modules/provisioning/`), junto con los health checks y la persistencia de deployments/outputs/versiones.
@@ -130,7 +130,8 @@ Prefijo: `/api/v1`. Los cuerpos son JSON y la autenticación usa la cookie HttpO
 | `POST /auth/login` | `{email,password}`; crea sesión | Público, con límite de intentos |
 | `GET /auth/me` | Usuario actual | Sesión |
 | `POST /auth/logout` | Invalida sesión | Sesión |
-| `GET /plans` | Catálogo inicial | Sesión |
+| `GET /plans` | Catálogo con `sizing`, `limits` y `backup` (respaldo que aplica el motor según el plan) | Sesión |
+| `GET /engines` | Motores del wizard: `{code,label,available}`; `available=false` = aún sin adaptador | Sesión |
 | `GET /tenants` | `q`, `status`, `env`, `plan`, `limit`, `offset` | Sesión, filtrado por permisos |
 | `POST /tenants` | Registrar institución, sin desplegar | Administrador de plataforma |
 | `GET /tenants/:id` | Datos, últimas 20 operaciones y 10 despliegues | Sesión, filtrado por permisos |
@@ -214,7 +215,7 @@ Los comandos se ejecutan con el [ejecutor común de P6](platform_api/src/worker/
 
 Para crear la infraestructura de un tenant:
 
-- **Desde la UI:** detalle del tenant → **Crear infraestructura**.
+- **Desde la UI:** wizard **Crear tenant** (`/tenants/new`) con la casilla *Crear la infraestructura al confirmar*, o detalle del tenant → **Crear infraestructura**.
 - **Desde la API:** `POST /api/v1/tenants/<uuid>/operations` con `{"type":"create"}`.
 
 Para probar sin AWS (terraform simulado): `pnpm test:engines`.

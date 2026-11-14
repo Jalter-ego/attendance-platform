@@ -1,5 +1,5 @@
 import { api, post } from '../../../lib/api';
-import type { Tenant, TenantDetail, Plan } from '../types';
+import type { Engine, Tenant, TenantDetail, Plan } from '../types';
 
 export const tenantsService = {
   list: (query: string, signal?: AbortSignal) =>
@@ -10,6 +10,8 @@ export const tenantsService = {
   detail: (id: string, signal?: AbortSignal) =>
     api<TenantDetail>(`/tenants/${id}`, { signal }),
   plans: (signal?: AbortSignal) => api<{ items: Plan[] }>('/plans', { signal }),
-  register: (input: Omit<Tenant, 'id' | 'status' | 'created_at' | 'region'>) =>
+  engines: (signal?: AbortSignal) =>
+    api<{ items: Engine[] }>('/engines', { signal }),
+  register: (input: Omit<Tenant, 'id' | 'status' | 'created_at'>) =>
     post<Tenant>('/tenants', input),
 };
