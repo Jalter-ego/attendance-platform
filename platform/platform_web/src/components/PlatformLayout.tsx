@@ -30,6 +30,11 @@ export function PlatformLayout() {
             Respaldos
             <Icon name="arrow" size={16} />
           </NavLink>
+          <NavLink to="/plans">
+            <Icon name="layers" />
+            Planes
+            <Icon name="arrow" size={16} />
+          </NavLink>
         </nav>
         <div className="sidebar-bottom">
           <div className="environment-dot" />
@@ -41,7 +46,11 @@ export function PlatformLayout() {
         <header className="topbar">
           <span>
             Plataforma <span className="breadcrumb-divider">/</span>{' '}
-            {pathname.startsWith('/backups') ? 'Respaldos' : 'Instituciones'}
+            {pathname.startsWith('/backups')
+              ? 'Respaldos'
+              : pathname.startsWith('/plans')
+                ? 'Planes'
+                : 'Instituciones'}
           </span>
           <div className="profile">
             <span className="avatar">

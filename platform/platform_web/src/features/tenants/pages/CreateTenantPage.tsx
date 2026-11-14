@@ -39,7 +39,8 @@ const TIMEZONES = [
   'America/Mexico_City',
   'UTC',
 ];
-const PLAN_COPY: Record<Tenant['plan'], string> = {
+// Respaldo si un plan no trae descripción (la edita P4 en la pantalla Planes).
+const PLAN_COPY: Record<string, string> = {
   basic: 'Para instituciones pequeñas',
   standard: 'Para instituciones en crecimiento',
   advanced: 'Para alta demanda',
@@ -285,7 +286,7 @@ export function CreateTenantPage() {
                         <strong>{item.name}</strong>
                         {item.code === draft.plan && <span className="badge">Seleccionado</span>}
                       </span>
-                      <span className="muted">{PLAN_COPY[item.code]}</span>
+                      <span className="muted">{item.description || PLAN_COPY[item.code] || ''}</span>
                       <ul>
                         <li>Hasta {item.limits.max_students?.toLocaleString('es-BO') ?? '∞'} estudiantes</li>
                         <li>
