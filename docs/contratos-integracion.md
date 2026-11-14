@@ -43,7 +43,7 @@ P2 define el detalle de `resources` y las interfaces de los adaptadores; P6 defi
 
 ### Adaptadores de motor (P2, implementado)
 
-- **Interfaz** `EngineAdapter` en `platform/platform_api/src/engines/adapter.js`: `versions`, `preview(ctx, {destroy})`, `apply`, `suspend`, `resume`, `destroy`, `outputs`. Terraform y OpenTofu comparten la implementación (`terraform.js`) y ejecutan los CLIs con el ejecutor común de P6; Pulumi y CloudFormation se agregarán con la misma interfaz.
+- **Interfaz** `EngineAdapter` en `platform/platform_api/src/engines/adapter.js`: `versions`, `preview(ctx, {destroy})`, `apply`, `suspend`, `resume`, `destroy`, `outputs`. Terraform y OpenTofu comparten la implementación (`terraform.js`) y ejecutan los CLIs con el ejecutor común de P6. CloudFormation (`cloudformation.js`) usa el SDK de AWS: un stack `<project>-<tenant_id>-<env>` con `infra/cloudformation/tenant.yaml`, las mismas etiquetas (`ManagedBy=cloudformation`) y los mismos outputs comunes. Pulumi se agregará con la misma interfaz.
 - **`resources`**: lista de `{type, role, id}` derivada de los outputs. Por ejemplo, `{"type":"aws_instance","role":"db","id":"i-…"}` para cada EC2 y `{"type":"aws_ebs_volume","role":"db","id":"vol-…"}` para el disco de datos.
 - **`outputs`**: todos los outputs no sensibles del módulo (`urls`, `instance_ids`, `private_ips`, `db_volume_id`, `suspended`, `backup`, `releases`, etc.); los marcados `sensitive` se omiten.
 - **`tool_versions`**: `engine`, `terraform` o `tofu`, `provider_aws`, `image_version`, `image_git_commit`, `templates_commit` y `module`.

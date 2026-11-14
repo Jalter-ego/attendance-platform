@@ -32,6 +32,7 @@ Los commits y PRs llevan el autor real.
 | Errores comprensibles (RF-11) | Los comandos corren con el ejecutor común de P6 (`worker/services/command-runner.js`). `src/engines/errors.js` traduce los errores conocidos (bloqueo, credenciales, cuota de vCPU, AMIs, permisos, bucket) a partir de stderr. Cancelar desde la UI no corta un `apply` a medias; perder la operación sí lo detiene. |
 | Secretos | El handler `create` llama al servicio SSM de P6 (`worker/services/tenant-secrets.js`) antes del primer apply; los eventos solo muestran nombres. |
 | **Wizard Crear tenant** (RF-03, RF-07) | `platform_web/src/features/tenants/pages/CreateTenantPage.tsx`, en `/tenants/new` y basado en el mockup del PDF:<br>• **Datos y plan:** tarjetas de plan con límites y respaldo, selector de motor, e identificador generado desde el nombre.<br>• **Configuración:** zona horaria, servidores con sus tamaños, límites y respaldo.<br>• **Revisión:** lo que se creará en AWS, con opción de crear la infraestructura al confirmar.<br>• Resumen lateral en vivo y validación por paso. Los motores sin adaptador quedan como "solo registro".<br>API: `GET /engines` y `backup` en `GET /plans`. Reemplaza al formulario de registro anterior. |
+| **D4/D5** CloudFormation | `infra/cloudformation/tenant.yaml`: el mismo stack que el módulo Terraform (3 EC2 con IMDSv2, EBS cifrado, SG por rol, IAM limitado al prefijo SSM, respaldos opcionales), un stack por tenant.<br>`src/engines/cloudformation.js` (SDK de AWS):<br>• change sets como vista previa, con bloqueo si se perdería el disco de datos;<br>• eventos del stack como logs y error tomado del primer recurso fallido;<br>• reintento que limpia `ROLLBACK_COMPLETE`;<br>• **D5:** suspender y reanudar con la API de EC2.<br>Documentado en `infra/cloudformation/README.md`. |
 | **D7** Registro de versiones (RF-13) | Cada despliegue guarda en `deployments` el motor y su versión, el proveedor AWS, la versión y el commit de las AMIs, el commit de las plantillas, las AMIs, los recursos y los outputs. Se ve en el panel **Infraestructura** del detalle del tenant. |
 
 ### Cómo lo verifiqué
@@ -53,11 +54,13 @@ Los commits y PRs llevan el autor real.
   - un identificador repetido muestra el error de la API;
   - a 390 px no hay scroll horizontal.
 
-Pendiente de probar en AWS: crear un tenant real desde la plataforma (requiere `IAC_STATE_BUCKET` y los outputs de la base) y OpenTofu con el CLI instalado.
+- CloudFormation: `cfn-lint` sin hallazgos y `pnpm test:cloudformation` (10 pruebas con AWS simulado: crear, sin cambios, bloqueo por pérdida de datos, error legible, reintento tras `ROLLBACK_COMPLETE`, suspender/reanudar por EC2, eliminar, validación de AMIs).
+
+Pendiente de probar en AWS: crear un tenant real desde la plataforma con Terraform y con CloudFormation (requiere `IAC_STATE_BUCKET`, los outputs de la base y credenciales válidas del worker) y OpenTofu con el CLI instalado.
 
 ### Pendiente
 
-Pulumi (D3), CloudFormation (D4/D5), comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1).
+Pulumi (D3), comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1).
 
 ### Qué defiendo en el video
 
