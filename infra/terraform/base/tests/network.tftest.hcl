@@ -46,6 +46,12 @@ override_resource {
   values          = { id = "rtb-00000000000000002" }
 }
 
+override_resource {
+  target          = aws_s3_bucket.backups
+  override_during = plan
+  values          = { arn = "arn:aws:s3:::attendance-platform-backups-123456789012" }
+}
+
 run "isolated_network" {
   command = plan
 
@@ -185,6 +191,17 @@ run "backup_resources_and_project_isolation" {
       alltrue([for endpoint in aws_vpc_endpoint.ssm_agent : endpoint.private_dns_enabled])
     )
     error_message = "El acceso S3 y los canales SSM deben estar disponibles desde la subred privada."
+  }
+
+  assert {
+    condition = (
+      contains(jsondecode(aws_vpc_endpoint.s3.policy).Statement[0].Action, "s3:GetObject") &&
+      toset(jsondecode(aws_vpc_endpoint.s3.policy).Statement[0].Resource) == toset([
+        "arn:aws:s3:::attendance-platform-backups-123456789012",
+        "arn:aws:s3:::attendance-platform-backups-123456789012/*",
+      ])
+    )
+    error_message = "El endpoint privado debe admitir descargar releases y dumps del bucket compartido; IAM limita cada tenant."
   }
 
   assert {

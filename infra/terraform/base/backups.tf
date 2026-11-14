@@ -83,7 +83,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   }
 }
 
-# Solo HTTPS. El acceso por tenant lo limita el rol IAM de cada VM db (prefijo propio).
+# Solo HTTPS. Los roles IAM limitan DB a db/ y frontend/backend a releases/ de su tenant.
 resource "aws_s3_bucket_policy" "backups" {
   bucket = aws_s3_bucket.backups.id
   policy = jsonencode({
@@ -102,6 +102,8 @@ resource "aws_s3_bucket_policy" "backups" {
 }
 
 # La subred privada no tiene salida a Internet: S3 por endpoint de gateway (sin costo).
+# La politica ya cubre tenants/<id>/<env>/releases/* ademas de los dumps.
+# Esto habilita el paso por la red; cada rol IAM decide que prefijo/acciones puede usar.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.platform.id
   service_name      = "com.amazonaws.${var.aws_region}.s3"
