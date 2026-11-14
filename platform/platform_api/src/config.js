@@ -1,4 +1,15 @@
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+
+// Respaldos (P3): bash que ejecuta infra/backups/tenant-backup.sh. En Windows, Git Bash
+// (no el bash de WSL, que no ve las credenciales de AWS de Windows).
+const defaultBash =
+  process.platform === 'win32'
+    ? 'C:\\Program Files\\Git\\bin\\bash.exe'
+    : 'bash';
+const defaultBackupScript = fileURLToPath(
+  new URL('../../../infra/backups/tenant-backup.sh', import.meta.url),
+);
 
 const boolean = z
   .enum(['true', 'false'])
@@ -18,6 +29,9 @@ const schema = z.object({
   COOKIE_SECURE: boolean.optional(),
   WORKER_POLL_MS: z.coerce.number().int().min(100).max(30000).default(1000),
   WORKER_STALE_MS: z.coerce.number().int().min(30000).default(60000),
+  BACKUP_BASH: z.string().trim().default(defaultBash),
+  BACKUP_SCRIPT: z.string().trim().default(defaultBackupScript),
+  BACKUP_TIMEOUT_S: z.coerce.number().int().min(60).max(3600).default(900),
 });
 
 export function readConfig(env = process.env) {

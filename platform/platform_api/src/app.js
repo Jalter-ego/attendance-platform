@@ -21,6 +21,7 @@ import {
   cancelOperation,
   retryOperation,
 } from './modules/operations/operations.service.js';
+import { listBackups } from './modules/backups/backups.service.js';
 
 export function createApp({ pool, config }) {
   const app = express();
@@ -121,6 +122,11 @@ export function createApp({ pool, config }) {
   );
   api.get('/tenants/:id', async (request, response) =>
     response.json(await tenantDetail(pool, request.user, request.params.id)),
+  );
+  api.get('/tenants/:id/backups', async (request, response) =>
+    response.json(
+      await listBackups(pool, config, request.user, request.params.id),
+    ),
   );
   api.post('/tenants/:id/operations', requireAdmin, async (request, response) =>
     response

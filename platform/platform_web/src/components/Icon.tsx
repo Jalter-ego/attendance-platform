@@ -19,6 +19,7 @@ const paths = {
   activity: ['M2 12h5l3-8 4 16 3-8h5'],
   back: ['M19 12H5', 'm11 6-6 6 6 6'],
   check: ['m5 12 4 4L19 6'],
+  archive: ['M3 4h18v5H3z', 'M5 9v11h14V9', 'M10 13h4'],
 } as const;
 
 export function Icon({

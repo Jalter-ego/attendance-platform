@@ -4,6 +4,7 @@ import { transaction } from '../../db/pool.js';
 import { HttpError } from '../../lib/errors.js';
 import { redact } from '../../lib/redact.js';
 import { getTenant, uuid } from '../tenants/tenants.service.js';
+import { backupIdInput } from '../backups/backups.service.js';
 
 export async function appendEvent(client, id, level, message) {
   await client.query(
@@ -12,16 +13,19 @@ export async function appendEvent(client, id, level, message) {
   );
 }
 
+const operationInput = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('diagnostic') }).strict(),
+  z.object({ type: z.literal('backup') }).strict(),
+  z.object({ type: z.literal('restore'), backup_id: backupIdInput }).strict(),
+]);
+
 export async function enqueue(pool, user, tenantId, input, retryOf = null) {
   await getTenant(pool, user, tenantId);
-  const { type } = z
-    .object({ type: z.literal('diagnostic') })
-    .strict()
-    .parse(input);
+  const { type, ...params } = operationInput.parse(input);
   return transaction(pool, async (client) => {
     const result = await client.query(
-      'INSERT INTO operations(id, tenant_id, type, initiated_by, retry_of) VALUES ($1,$2,$3,$4,$5) RETURNING *',
-      [randomUUID(), tenantId, type, user.id, retryOf],
+      'INSERT INTO operations(id, tenant_id, type, initiated_by, retry_of, params) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
+      [randomUUID(), tenantId, type, user.id, retryOf, params],
     );
     await appendEvent(
       client,
@@ -101,7 +105,7 @@ export async function retryOperation(pool, user, id) {
     pool,
     user,
     previous.tenant_id,
-    { type: previous.type },
+    { type: previous.type, ...previous.params },
     previous.id,
   );
 }
