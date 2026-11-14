@@ -19,7 +19,7 @@ El frontend publica HTTP y reenvía `/core/` a la API privada. La API solo admit
 
 No pases esos valores como variables de Terraform: terminarían en el estado. Backend y DB pueden leer el prefijo de su tenant/entorno; frontend no tiene permiso para leer secretos. En esta versión ambos lectores comparten ese prefijo, como utiliza el script de P3.
 
-Los respaldos (RF-19 opcional) están incluidos en las AMIs **0.2.1** y P3 reportó la prueba de restauración superada. `base.backups_bucket` vacío mantiene la función desactivada; con un bucket habilita IAM de S3/Run Command y la etiqueta del volumen para DLM. No usar la AMI 0.2.0, cuyo arranque de respaldos fallaba por una variable de Ansible; el PR #7 corrige ese problema. Las 0.1.2 no contienen los scripts de respaldo.
+Los respaldos (RF-19 opcional) están incluidos desde las AMIs **0.2.1** (vigente: 0.2.2) y P3 reportó la prueba de restauración superada. `base.backups_bucket` vacío mantiene la función desactivada; con un bucket habilita IAM de S3/Run Command y la etiqueta del volumen para DLM. No usar la AMI 0.2.0, cuyo arranque de respaldos fallaba por una variable de Ansible; el PR #7 corrige ese problema. Las 0.1.2 no contienen los scripts de respaldo.
 
 `backup` admite `{ schedule="weekly", retention_days=28 }` (predeterminado), `daily/14` o `daily/30`. El worker recibe esos datos del plan de P4. La etiqueta de snapshots combina proyecto y política (`BackupPolicy=attendance-platform:weekly-28d`); los permisos S3 de DB se limitan a `tenants/<id>/<env>/`.
 
@@ -123,4 +123,4 @@ terraform -chdir=infra/terraform/tenant validate
 terraform -chdir=infra/terraform/tenant test
 ```
 
-Diez pruebas con AWS simulado verifican aislamiento de red/IAM, datos de cloud-init y EBS, outputs, permisos/etiquetas de respaldos y rechazo de plantilla ausente, arquitectura incompatible, otra VPC o DNS privado desactivado. Incluyen creación → suspensión → reanudación sobre el mismo estado de prueba, conservación de IDs de EC2/EBS y actualización de las URLs con otra IP pública. La fixture de cloud-init solo verifica el contrato y no arranca Attendance. P3 reportó la prueba real con las AMIs 0.2.1; los nuevos límites y métricas de P4 requieren una AMI backend nueva y otra prueba de integración.
+Diez pruebas con AWS simulado verifican aislamiento de red/IAM, datos de cloud-init y EBS, outputs, permisos/etiquetas de respaldos y rechazo de plantilla ausente, arquitectura incompatible, otra VPC o DNS privado desactivado. Incluyen creación → suspensión → reanudación sobre el mismo estado de prueba, conservación de IDs de EC2/EBS y actualización de las URLs con otra IP pública. La fixture de cloud-init solo verifica el contrato y no arranca Attendance. P3 reportó la prueba real con las AMIs 0.2.1 y la repitió con 0.2.2, que incluye los límites y métricas de P4.
