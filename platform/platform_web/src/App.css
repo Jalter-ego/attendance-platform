@@ -490,8 +490,23 @@ tbody tr:hover {
 }
 .detail-summary,
 .integration-card,
-.operation-panel {
+.operation-panel,
+.infra-panel {
   padding: 25px;
+}
+/* P2: panel de infraestructura del detalle del tenant. */
+.infra-panel {
+  margin-top: 20px;
+}
+.infra-panel .infra-versions {
+  margin-bottom: 18px;
+}
+.infra-panel .infra-versions dd {
+  overflow-wrap: anywhere;
+}
+.infra-panel > .muted {
+  font-size: 0.8rem;
+  margin: 0 0 18px;
 }
 .panel-heading {
   display: flex;

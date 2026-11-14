@@ -19,8 +19,12 @@ export interface TenantDetail extends Tenant {
   deployments: {
     id: string;
     created_at: string;
+    engine: Tenant['engine'];
+    status: string;
+    ami: Record<string, string>;
     outputs: { urls?: Record<string, string | null> };
-    tool_versions: Record<string, string>;
+    resources: { type: string; role: string; id: string }[];
+    tool_versions: Record<string, string | null>;
   }[];
 }
 
@@ -32,4 +36,11 @@ export const planNames = {
   basic: 'Básico',
   standard: 'Estándar',
   advanced: 'Avanzado',
+};
+
+export const engineNames: Record<Tenant['engine'], string> = {
+  terraform: 'Terraform',
+  tofu: 'OpenTofu',
+  pulumi: 'Pulumi',
+  cloudformation: 'CloudFormation',
 };
