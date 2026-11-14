@@ -134,7 +134,7 @@ terraform -chdir=infra/terraform/tenant show ../../../.local/san-marcos-destroy.
 
 Para una lista que destaque reemplazos, interrupciones y pérdida del EBS de datos, usa `python3 infra/terraform/plan_preview.py --directory infra/terraform/tenant --plan .local/san-marcos-destroy.tfplan` desde la raíz. Acepta también planes de creación/actualización y salida JSON; ver [la vista previa C4](../README.md#vista-previa-de-cambios--c4). La herramienta solo lee el plan, sin aplicarlo.
 
-Siguen pendientes los cambios de plan, el servidor de monitoreo y la interfaz de la plataforma. OpenTofu usará el mismo código, con `engine="tofu"` y su backend propio por despliegue; la ejecución con ese CLI está pendiente de verificar. No alternes motores sobre una instalación existente sin una migración acordada.
+El servidor compartido de monitoreo ya está creado; P5 configura su observabilidad. Siguen pendientes los cambios de plan y la integración del ciclo de vida en la plataforma. OpenTofu usa el mismo código, con `engine="tofu"` y su backend propio por despliegue: sus trece pruebas simuladas pasan. Ver [C6 y las opciones de init/validate para OpenTofu](../README.md#comprobar-terraform-y-opentofu--c6). El despliegue real con ese motor sigue pendiente. No alternes motores sobre una instalación existente sin una migración acordada.
 
 ## Verificación sin desplegar
 
