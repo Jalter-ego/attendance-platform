@@ -40,7 +40,7 @@ esac
 exec 9>/run/attendance-update.lock
 flock -n 9 || result_failed "ya hay otra actualización en curso en esta VM"
 
-echo "== $COMP $FROM → $VER en $(jq -r '.tenant_id + "/" + .env' "$ETC/tenant.json")"
+echo "== $COMP $FROM -> $VER en $(jq -r '.tenant_id + "/" + .env' "$ETC/tenant.json")"
 rm -rf "$STAGE" && install -d -m 0700 "$STAGE"
 PKG="$COMP-$VER.tar.gz"
 aws s3 cp --only-show-errors --region "$REGION" "s3://$BUCKET/$PREFIX/$PKG" "$STAGE/$PKG" \
@@ -60,7 +60,7 @@ rm -f "$STAGE/$PKG" "$STAGE/$PKG.sha256"
 
 echo "== ansible-playbook update.yml (log: $LOG)"
 rm -f "$STATE/update.json"
-{ echo; echo "===== $(date -Is) $COMP $FROM → $VER"; } >> "$LOG"
+{ echo; echo "===== $(date -Is) $COMP $FROM -> $VER"; } >> "$LOG"
 ( cd "$STAGE/ansible" && ANSIBLE_CONFIG="$STAGE/ansible/ansible.cfg" ansible-playbook update.yml \
     -e "@$ETC/tenant.json" -e "release_stage=$STAGE" ) >> "$LOG" 2>&1
 RC=$?

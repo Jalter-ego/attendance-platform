@@ -42,6 +42,9 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 # Git Bash en Windows convierte "/opt/..." en rutas de Windows; aquí no queremos eso.
 export MSYS_NO_PATHCONV=1
+# AWS CLI en Windows escribe con la página de códigos del sistema: sin esto no puede mostrar
+# acentos ni "→" de la salida remota y se pierde el JSON del resultado (probado por P3).
+export AWS_CLI_OUTPUT_ENCODING=UTF-8
 HERE=$(cd "$(dirname "$0")" && pwd)
 # AWS CLI en Windows (worker con Git Bash) devuelve \r\n: se limpia todo lo que se lee de ella.
 aws_text() { aws "$@" --output text | tr -d '\r'; }
