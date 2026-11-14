@@ -1,6 +1,6 @@
 // Interfaz común de los motores de aprovisionamiento (D1, P2). El worker solo habla con
 // esta interfaz: no sabe si debajo corre terraform, tofu, pulumi o aws cloudformation.
-import { OperationError } from '../lib/operation-error.js';
+import { OperationError } from '../worker/errors.js';
 import { createTerraformAdapter } from './terraform.js';
 
 /**
@@ -47,6 +47,7 @@ export function getAdapter(engine, config) {
   if (engine === 'terraform' || engine === 'tofu')
     return createTerraformAdapter(config, engine);
   throw new OperationError(
+    'ENGINE_NOT_AVAILABLE',
     `El motor ${ENGINES[engine]?.label ?? engine} todavía no está conectado al worker.`,
   );
 }

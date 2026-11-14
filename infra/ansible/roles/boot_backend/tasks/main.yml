@@ -62,11 +62,14 @@
     state: "{{ 'restarted' if backend_env_file.changed else 'started' }}"
     enabled: true
 
-- name: Esperar a que la API responda
+# /health consulta la BD (SELECT 1 en lectura y escritura): 200 = API arriba Y conectada a la
+# BD de su tenant. Antes se aceptaba 200/401/404 en la raíz, que solo probaba que Node escuchaba.
+# Si falla, attendance-boot marca boot.json como failed y tenant-health.sh --boot lo muestra.
+- name: Esperar /health = 200 (API conectada a su BD)
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ backend_port }}{{ backend_api_path }}"
-    status_code: [200, 401, 404]
+    url: "http://127.0.0.1:{{ backend_port }}{{ backend_api_path }}/health"
+    status_code: 200
   register: api
-  until: api.status in [200, 401, 404]
+  until: api.status == 200
   retries: 45
   delay: 2

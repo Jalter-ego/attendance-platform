@@ -51,7 +51,6 @@ const schema = z.object({
   HEALTH_TIMEOUT_S: z.coerce.number().int().min(30).max(3600).default(900),
   TERRAFORM_BIN: z.string().trim().default('terraform'),
   TOFU_BIN: z.string().trim().default('tofu'),
-  AWS_BIN: z.string().trim().default('aws'),
   PYTHON_BIN: z
     .string()
     .trim()

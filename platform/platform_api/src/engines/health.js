@@ -2,7 +2,7 @@
 // final de cloud-init/Ansible. El tenant queda listo solo cuando frontend y backend
 // responden 200 (contrato de P1/P4: outputs.urls.frontend_health y backend_health).
 import { setTimeout as sleep } from 'node:timers/promises';
-import { OperationError } from '../lib/operation-error.js';
+import { OperationError } from '../worker/errors.js';
 
 async function probe(url, signal) {
   try {
@@ -26,7 +26,7 @@ export async function waitForHealth(
 ) {
   const targets = Object.entries(urls).filter(([, url]) => url);
   if (!targets.length)
-    throw new OperationError('El motor no devolvió URLs para comprobar la salud.');
+    throw new OperationError('HEALTH_NO_URLS', 'El motor no devolvió URLs para comprobar la salud.');
   const started = Date.now();
   let lastReport = started;
   const status = {};
@@ -42,6 +42,7 @@ export async function waitForHealth(
     const elapsed = Date.now() - started;
     if (elapsed >= timeoutMs)
       throw new OperationError(
+        'HEALTH_TIMEOUT',
         `La infraestructura se creó, pero ${pending.map(([name]) => name).join(' y ')} no respondió en ${Math.round(timeoutMs / 1000)} s. Revisa /var/log/attendance-boot.log en la VM y reintenta (no duplica recursos).`,
       );
     if (Date.now() - lastReport >= reportEveryMs) {

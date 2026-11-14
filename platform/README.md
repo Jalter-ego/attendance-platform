@@ -114,7 +114,9 @@ platform_web/src/
 - **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Pendiente: wizard de 3 pasos, Pulumi y CloudFormation. Registrar no equivale a aprovisionar.
 - **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
 - **P3/P4/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`. El catálogo inicial se consulta desde la API; P4 puede ampliarlo mediante nuevas migraciones y sus endpoints.
-- **P6:** P2 dejó implementados, para revisar juntos, la creación idempotente de secretos en SSM (`src/engines/secrets.js`), la ejecución de motores con timeout/logs, los health checks y la persistencia de deployments/outputs/versiones.
+- **P6:** el ejecutor común y el servicio SSM ya están conectados al flujo de creación de P2 (`src/modules/provisioning/`), junto con los health checks y la persistencia de deployments/outputs/versiones.
+
+H4/H5 ya tienen un [ejecutor común de procesos](platform_api/src/worker/README.md), integrado a los respaldos y a los motores IaC: progreso filtrado, timeout, cancelación del árbol de procesos y errores legibles. La cancelación se detecta también mientras el comando permanece en silencio. El servicio SSM prepara los tres secretos por tenant y conserva los existentes al reintentar.
 
 Las tablas iniciales son `users`, `sessions`, `plans`, `tenants`, `operations`, `operation_events` y `deployments`. Las contraseñas se guardan con scrypt; en sesiones solo se conserva el hash del token. No hay registro público de usuarios. Se contempla `tenant_admin` para lectura limitada a su institución; falta su pantalla/flujo de alta. Auditoría, alertas y escáneres se integrarán en sus bloques respectivos. RF-04/05/06/15/19/20 siguen siendo opcionales.
 
@@ -157,7 +159,7 @@ Entrada de registro:
 
 Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Crear, suspender, reanudar y eliminar la infraestructura funcionan con Terraform/OpenTofu: ver [Motores IaC](#motores-iac-p2). Respaldar y restaurar: ver [Respaldos](#respaldos-p3).
 
-La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo. Se admite cancelar y reintentar cualquier operación. El reintento de IaC vuelve a planificar sobre el mismo estado del tenant: completa lo pendiente sin duplicar recursos.
+La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo y consulta la cancelación aunque no haya logs. Al perder la propiedad, se detiene el proceso local sin sobrescribir al nuevo dueño. Se admite cancelar y reintentar cualquier operación. El reintento de IaC vuelve a planificar sobre el mismo estado del tenant: completa lo pendiente sin duplicar recursos.
 
 ## Motores IaC (P2)
 
@@ -170,11 +172,11 @@ El worker crea y administra la infraestructura de cada tenant con el motor elegi
 | `resume` | `suspended`, `failed` | `ready` | `apply` con `suspended=false`, health checks y URLs nuevas (la IP pública cambia) |
 | `destroy` | todos menos `deleted` | `deleted` | `plan -destroy` → `apply`. Exige `confirm` igual al `tenant_id` (RF-18) |
 
-Durante la operación el tenant pasa por `provisioning`, `suspending`, `resuming` o `deleting`. Si falla o se cancela queda en `failed`, y **Reintentar** vuelve a planificar sobre el mismo estado sin duplicar recursos (RF-12).
+Los comandos se ejecutan con el [ejecutor común de P6](platform_api/src/worker/README.md) y los secretos los prepara su servicio SSM. Durante la operación el tenant pasa por `provisioning`, `suspending`, `resuming` o `deleting`. Si falla o se cancela queda en `failed`, y **Reintentar** vuelve a planificar sobre el mismo estado sin duplicar recursos (RF-12).
 
 - **Revisión del plan:** antes de aplicar se revisa el plan. Si una operación que no es `destroy` fuera a borrar el disco de datos de PostgreSQL, se detiene sin aplicar.
-- **Cancelar:** durante el `apply`, la cancelación se atiende al terminar ese paso, para no dejar el estado a medias.
-- **Apagar el worker:** sí corta el `apply`. En Windows el bloqueo del estado puede quedar tomado y hay que revisarlo con `force-unlock` antes de reintentar.
+- **Cancelar:** durante el `apply`, la cancelación (`OperationCancelled`) se atiende al terminar ese paso, para no dejar el estado a medias. En cualquier otro paso corta el proceso de inmediato.
+- **Perder la operación o apagar el worker:** sí corta el `apply`. En Linux/macOS terraform recibe SIGTERM y tiene 60 s para terminar y liberar el bloqueo; en Windows se usa `taskkill /F`. Si el bloqueo queda tomado, hay que revisarlo con `force-unlock` antes de reintentar.
 
 ### Cómo se ejecuta y dónde queda el estado
 
@@ -189,10 +191,9 @@ Durante la operación el tenant pasa por `provisioning`, `suspending`, `resuming
   - el tenant y su plan (`plans.sizing` y `limits`, y respaldo semanal o diario según el plan);
   - los outputs de la base (`IAC_BASE_OUTPUTS`), generados con `terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json`;
   - las AMIs de `infra/packer/ami-ids.json`.
-- **Secretos:** antes del primer `apply` se crean en SSM `/tenants/<id>/<env>/{db_password,jwt_secret,admin_password}` como `SecureString` alfanuméricos.
-  - Si ya existen, no se reemplazan.
-  - Los valores llegan a AWS CLI en un archivo temporal privado, no en la línea de comandos.
-  - Nunca llegan al tfstate, a las variables ni a los eventos.
+- **Secretos:** antes del primer `apply`, el servicio SSM de P6 (`worker/services/tenant-secrets.js`) crea `/tenants/<id>/<env>/{db_password,jwt_secret,admin_password}` como `SecureString`.
+  - Si ya existen, se reutilizan y no se reemplazan.
+  - Nunca llegan al tfstate, a las variables ni a los eventos; los eventos solo muestran los nombres.
   - La contraseña inicial del administrador del tenant se consulta con `aws ssm get-parameter --with-decryption --name /tenants/<id>/<env>/admin_password`.
 - **Logs y errores:** cada línea del CLI se guarda como evento, ya redactado. El error final se traduce a un mensaje comprensible (bloqueo del estado, credenciales, cuota de vCPU, AMIs, permisos o bucket), y el detalle técnico queda en los eventos.
 - **Versiones (RF-13):** cada despliegue guarda en `deployments.tool_versions`:
@@ -205,8 +206,8 @@ Durante la operación el tenant pasa por `provisioning`, `suspending`, `resuming
 
 ### Configurar el worker
 
-1. Instalar Terraform ≥ 1.10 (u OpenTofu ≥ 1.10 para tenants con `engine=tofu`), AWS CLI v2 y, si se quiere la vista previa, Python 3.
-2. Dar credenciales AWS al proceso del worker (`AWS_PROFILE` o `AWS_*`). Necesitan permisos sobre el módulo tenant, el bucket del estado y `ssm:PutParameter` en `/tenants/*`.
+1. Instalar Terraform ≥ 1.10 (u OpenTofu ≥ 1.10 para tenants con `engine=tofu`) y, si se quiere la vista previa, Python 3.
+2. Dar credenciales AWS al proceso del worker (`AWS_PROFILE` o `AWS_*`). Necesitan permisos sobre el módulo tenant, el bucket del estado y, en `/tenants/*`, `ssm:DescribeParameters`, `ssm:PutParameter` y `ssm:AddTagsToResource`.
 3. En `platform_api/.env`, definir `IAC_STATE_BUCKET=<bucket del estado>`. Las demás variables tienen valores por defecto (ver `.env.example`).
 4. Exportar los outputs de la base a `.local/base.outputs.json` con el comando de arriba.
 5. Ejecutar `pnpm db:migrate` (aplica `003_engines.sql`) y luego `pnpm worker`.
@@ -216,7 +217,7 @@ Para crear la infraestructura de un tenant:
 - **Desde la UI:** detalle del tenant → **Crear infraestructura**.
 - **Desde la API:** `POST /api/v1/tenants/<uuid>/operations` con `{"type":"create"}`.
 
-Para probar sin AWS (terraform y aws simulados): `pnpm test:engines`.
+Para probar sin AWS (terraform simulado): `pnpm test:engines`.
 
 ## Respaldos (P3)
 
@@ -237,15 +238,9 @@ cd platform/platform_api
 pnpm test
 ```
 
-Para integración usa una base **desechable cuyo nombre empiece por `platform_test`**. La prueba elimina sus tablas; no carga `.env` y exige `TEST_DATABASE_URL` explícita. Por ejemplo, con el PostgreSQL local del compose, desde la raíz:
+La suite actual contiene 33 pruebas: ejecutor de procesos, filtrado de secretos, respaldos de P3, cancelación/propiedad del worker y preparación de SSM. Usa procesos ficticios, un doble de conexión y un cliente SSM simulado; no carga `.env`, no conecta a AWS ni modifica PostgreSQL. Incluye hijos que ignoran SIGTERM, cancelación sin logs, fallo parcial de secretos y reintentos sin cambiar credenciales. Ver [el contrato del ejecutor y las pruebas](platform_api/src/worker/README.md).
 
-```bash
-docker compose -f platform/compose.yaml exec postgres createdb -U attendance platform_test
-cd platform/platform_api
-TEST_DATABASE_URL=postgresql://attendance:attendance_local@127.0.0.1:5433/platform_test pnpm test:integration
-```
-
-Siete pruebas unitarias y diez de integración verificadas con PostgreSQL 16: sesiones persistentes, logout/expiración, bootstrap repetible, permisos entre instituciones, validación, peticiones/workers simultáneos, eventos por cursor, cancelación y recuperación/reintento de trabajos interrumpidos.
+La comprobación de SQL, sesiones y permisos contra PostgreSQL real requiere su propia prueba de integración; el script `test:integration` no está disponible en este checkout. No ejecutar pruebas destructivas sobre la base de Supabase usada por el equipo.
 
 Frontend, desde `platform/platform_web/`:
 

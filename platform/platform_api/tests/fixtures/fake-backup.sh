@@ -18,4 +18,12 @@ case "${FAKE_MODE:-ok}" in
     sleep 30
     echo "{}"
     ;;
+  silent)
+    sleep 30
+    echo "{}"
+    ;;
+  secret-fail)
+    echo 'ERROR: acceso rechazado password="clave sensible de prueba"' >&2
+    exit 1
+    ;;
 esac

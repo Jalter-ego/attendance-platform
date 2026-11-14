@@ -43,7 +43,7 @@ P2 define el detalle de `resources` y las interfaces de los adaptadores; P6 defi
 
 ### Adaptadores de motor (P2, implementado)
 
-- **Interfaz** `EngineAdapter` en `platform/platform_api/src/engines/adapter.js`: `versions`, `preview(ctx, {destroy})`, `apply`, `suspend`, `resume`, `destroy`, `outputs`. Terraform y OpenTofu comparten la implementación (`terraform.js`); Pulumi y CloudFormation se agregarán con la misma interfaz.
+- **Interfaz** `EngineAdapter` en `platform/platform_api/src/engines/adapter.js`: `versions`, `preview(ctx, {destroy})`, `apply`, `suspend`, `resume`, `destroy`, `outputs`. Terraform y OpenTofu comparten la implementación (`terraform.js`) y ejecutan los CLIs con el ejecutor común de P6; Pulumi y CloudFormation se agregarán con la misma interfaz.
 - **`resources`**: lista de `{type, role, id}` derivada de los outputs. Por ejemplo, `{"type":"aws_instance","role":"db","id":"i-…"}` para cada EC2 y `{"type":"aws_ebs_volume","role":"db","id":"vol-…"}` para el disco de datos.
 - **`outputs`**: todos los outputs no sensibles del módulo (`urls`, `instance_ids`, `private_ips`, `db_volume_id`, `suspended`, `backup`, `releases`, etc.); los marcados `sensitive` se omiten.
 - **`tool_versions`**: `engine`, `terraform` o `tofu`, `provider_aws`, `image_version`, `image_git_commit`, `templates_commit` y `module`.
@@ -66,6 +66,14 @@ Un bucket nuevo, propio de este proyecto, almacena estados separados:
 Para Terraform/OpenTofu se utiliza el workspace `default`; la separación se hace con `key` y un directorio de ejecución por tenant. P6 debe impedir dos operaciones simultáneas del mismo tenant, y el backend S3 debe tener `use_lockfile=true`. Son protecciones complementarias. Los adaptadores siempre deben usar bloqueo y esperar un tiempo acotado, nunca deshabilitarlo.
 
 Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El responsable confirmó que el equipo ya dispone de acceso administrador. Cada clon configura su perfil AWS autorizado; las credenciales y la configuración `.terraform/` se mantienen fuera del repositorio. Los perfiles IAM de las EC2 siguen siendo identidades de servicio distintas de las cuentas del equipo.
+
+C6 verificado localmente con Terraform 1.16.6/OpenTofu 1.13.9 y el mismo proveedor AWS 6.69.1: 26 pruebas simuladas por motor. La fuente AWS se declara completa para conservar identidad y lockfiles. Para P2: seleccionar motor por despliegue, `engine="tofu"` para instalaciones nuevas con OpenTofu y un directorio propio. Si se copian las suites de Terraform, `tofu init` necesita `-test-directory=.c6-no-tests` y `tofu validate`, `-no-tests`; el worker puede excluir `tests/`. Ver [verificación y detalles de C6](../infra/terraform/README.md#comprobar-terraform-y-opentofu--c6). No se migró la base compartida; el despliegue real con OpenTofu y el bloqueo concurrente siguen pendientes.
+
+## Ejecutor y secretos del worker — P6/P2
+
+H4/H5 dispone de `platform/platform_api/src/worker/services/command-runner.js`, ya consumido por los respaldos de P3. Los adaptadores de P2 lo llaman con ejecutable/argumentos separados, directorio por tenant, `signal` y `onLine -> report`. Tiene timeout, cancelación del grupo de procesos y logs filtrados. El heartbeat detecta cancelación sin salida; si el worker pierde el trabajo, termina el comando local sin sobrescribir a otro dueño. Para `plan -detailed-exitcode` aceptar `[0,2]`. La salida `-json` no se registra; su captura explícita es privada, para parsear y guardar solo campos permitidos.
+
+`services/tenant-secrets.js` entrega `ensureTenantSecrets(tenant, {signal, projectName})` para llamar antes del primer apply. Usa el SDK oficial de AWS y el perfil del worker; crea `/tenants/<id>/<env>/{db_password,jwt_secret,admin_password}` como SecureString con `alias/aws/ssm` y `Overwrite=false`. Consulta solo metadatos y devuelve `{ssm_prefix, created, reused}` con nombres. Conserva los existentes, también tras un fallo parcial; no rota ni elimina secretos. Registrar una institución y el diagnóstico siguen sin crear secretos ni EC2. Falta conectar estos servicios al handler create de P2. Contrato, límites, ejemplos y pruebas: [worker](../platform/platform_api/src/worker/README.md).
 
 ## Suspensión y reanudación (P1/P2/P6)
 

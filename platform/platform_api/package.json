@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env src/server.js",
     "start": "node --env-file-if-exists=.env src/server.js",
@@ -12,10 +14,13 @@
     "db:check": "node --env-file-if-exists=.env scripts/check-db.js",
     "db:migrate": "node --env-file-if-exists=.env scripts/migrate.js",
     "admin:create": "node --env-file-if-exists=.env scripts/create-admin.js",
+    "test": "node --test tests/*.test.js",
+    "test:runner": "node --test tests/command-runner.test.js tests/redact.test.js",
     "test:backups": "node --test tests/backups.test.js",
     "test:engines": "node --test tests/engines.test.js"
   },
   "dependencies": {
+    "@aws-sdk/client-ssm": "3.1168.0",
     "cookie-parser": "^1.4.7",
     "express": "^5.1.0",
     "express-rate-limit": "^8.0.0",
@@ -23,5 +28,7 @@
     "pg": "^8.16.0",
     "zod": "^4.0.0"
   },
-  "devDependencies": { "supertest": "^7.1.4" }
+  "devDependencies": {
+    "supertest": "^7.1.4"
+  }
 }

@@ -1,5 +1,5 @@
 // Pruebas de los adaptadores de motor (P2) sin AWS: terraform y aws se simulan con
-// tests/fixtures/fake-*.mjs. Ejecutar con `pnpm test:engines`.
+// tests/fixtures/fake-terraform.mjs. Ejecutar con `pnpm test:engines`.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -11,10 +11,9 @@ import { readConfig } from '../src/config.js';
 import { getAdapter, engineAvailable } from '../src/engines/adapter.js';
 import { explainEngineError } from '../src/engines/errors.js';
 import { waitForHealth } from '../src/engines/health.js';
-import { ensureTenantSecrets } from '../src/engines/secrets.js';
 import { BACKUP_BY_PLAN, buildTenantInput } from '../src/engines/tenant-input.js';
 import { flattenOutputs, parsePlanLine } from '../src/engines/terraform.js';
-import { OperationError } from '../src/lib/operation-error.js';
+import { LeaseLost, OperationCancelled, OperationError } from '../src/worker/errors.js';
 import { assertCanEnqueue } from '../src/modules/provisioning/provisioning.service.js';
 
 const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
@@ -80,7 +79,6 @@ before(async () => {
     IAC_AMI_IDS: join(dir, 'ami.json'),
     IAC_RUNS_DIR: join(dir, 'runs'),
     TERRAFORM_BIN: fixture('fake-terraform.mjs'),
-    AWS_BIN: fixture('fake-aws.mjs'),
     PYTHON_BIN: 'no-existe-python',
   };
 });
@@ -275,22 +273,27 @@ test('sin IAC_STATE_BUCKET no ejecuta el motor', async () => {
 });
 
 test(
-  'cancelar durante apply espera a que termine el paso antes de cortar',
+  'cancelar desde la UI durante apply espera a que termine el paso',
   withEnv({ FAKE_TF_MODE: 'slowapply' }, async () => {
-    class Cancelled extends Error {}
     const log = join(dir, 'cancel.log');
     process.env.FAKE_TF_LOG = log;
     const input = await buildTenantInput(config, tenant, plan, { suspended: false });
+    const controller = new AbortController();
     const seen = [];
     const ctx = {
       ...context(input),
+      signal: controller.signal,
       report: async (message) => {
         seen.push(message);
-        if (/Creating\.\.\./.test(message)) throw new Cancelled();
+        // Como el heartbeat de P6: la cancelación llega por la señal y por report.
+        if (/Creating\.\.\./.test(message)) {
+          controller.abort(new OperationCancelled());
+          throw new OperationCancelled();
+        }
       },
     };
     try {
-      await assert.rejects(getAdapter('terraform', config).apply(ctx), Cancelled);
+      await assert.rejects(getAdapter('terraform', config).apply(ctx), OperationCancelled);
     } finally {
       delete process.env.FAKE_TF_LOG;
     }
@@ -299,6 +302,32 @@ test(
     const commands = (await calls(log)).map((call) => call.command);
     assert.ok(commands.includes('apply-finished'));
     assert.ok(!commands.includes('output'));
+  }),
+);
+
+test(
+  'perder la operación durante apply sí detiene el proceso',
+  withEnv({ FAKE_TF_MODE: 'slowapply' }, async () => {
+    const log = join(dir, 'lease.log');
+    process.env.FAKE_TF_LOG = log;
+    const input = await buildTenantInput(config, tenant, plan, { suspended: false });
+    const controller = new AbortController();
+    const ctx = {
+      ...context(input),
+      signal: controller.signal,
+      report: async (message) => {
+        if (/Creating\.\.\./.test(message)) controller.abort(new LeaseLost());
+      },
+    };
+    try {
+      await assert.rejects(getAdapter('terraform', config).apply(ctx), {
+        code: 'COMMAND_CANCELLED',
+      });
+    } finally {
+      delete process.env.FAKE_TF_LOG;
+    }
+    const commands = (await calls(log)).map((call) => call.command);
+    assert.ok(!commands.includes('apply-finished'));
   }),
 );
 
@@ -337,42 +366,3 @@ test('waitForHealth espera 200 y explica el timeout', async () => {
   );
   healthStatus = 200;
 });
-
-test(
-  'ensureTenantSecrets crea los que faltan, no reemplaza y no expone valores',
-  withEnv({ FAKE_AWS_EXISTING: 'db_password' }, async () => {
-    const log = join(dir, 'aws.log');
-    process.env.FAKE_AWS_LOG = log;
-    try {
-      const result = await ensureTenantSecrets(config, tenant);
-      assert.deepEqual(result, {
-        created: ['jwt_secret', 'admin_password'],
-        existing: ['db_password'],
-      });
-      const requests = await calls(log);
-      assert.deepEqual(
-        requests.map((request) => request.name),
-        [
-          '/tenants/demo-p2/test/db_password',
-          '/tenants/demo-p2/test/jwt_secret',
-          '/tenants/demo-p2/test/admin_password',
-        ],
-      );
-      assert.ok(requests.every((request) => request.type === 'SecureString'));
-      assert.ok(requests.every((request) => request.alnum && request.overwrite === false));
-      assert.deepEqual(requests.map((request) => request.length), [24, 48, 20]);
-    } finally {
-      delete process.env.FAKE_AWS_LOG;
-    }
-  }),
-);
-
-test(
-  'ensureTenantSecrets informa la falta de permisos',
-  withEnv({ FAKE_AWS_MODE: 'denied' }, async () => {
-    await assert.rejects(
-      ensureTenantSecrets(config, tenant),
-      (error) => error instanceof OperationError && /no pueden escribir/.test(error.message),
-    );
-  }),
-);

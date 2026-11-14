@@ -5,10 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { transaction } from '../../db/pool.js';
 import { getAdapter, engineAvailable, ENGINES } from '../../engines/adapter.js';
 import { buildTenantInput } from '../../engines/tenant-input.js';
-import { ensureTenantSecrets } from '../../engines/secrets.js';
 import { waitForHealth } from '../../engines/health.js';
 import { HttpError } from '../../lib/errors.js';
-import { OperationError } from '../../lib/operation-error.js';
+import { OperationError } from '../../worker/errors.js';
+import { ensureTenantSecrets } from '../../worker/services/tenant-secrets.js';
 
 export const INFRA_OPERATIONS = ['create', 'suspend', 'resume', 'destroy'];
 
@@ -86,7 +86,7 @@ export async function runInfraOperation({ pool, config, operation, report, signa
     'SELECT t.*, row_to_json(p) AS plan_row FROM tenants t JOIN plans p ON p.code = t.plan WHERE t.id = $1',
     [operation.tenant_id],
   );
-  if (!rows.length) throw new OperationError('La institución ya no existe.');
+  if (!rows.length) throw new OperationError('TENANT_NOT_FOUND', 'La institución ya no existe.');
   const tenant = rows[0];
   const type = operation.type;
   const transition = TRANSITION[type];
@@ -101,9 +101,16 @@ export async function runInfraOperation({ pool, config, operation, report, signa
       { stage: 'Validando la solicitud', progress: 5 },
     );
     if (type === 'create') {
-      const secrets = await ensureTenantSecrets(config, tenant, { signal });
+      // Servicio SSM de P6: crea los SecureString que faltan y conserva los existentes.
+      // config.ssmClient solo existe en pruebas (cliente simulado).
+      const secrets = await ensureTenantSecrets(tenant, {
+        signal,
+        projectName: input.base.project_name,
+        client: config.ssmClient,
+      });
+      const names = (list) => list.map((name) => name.split('/').pop()).join(', ') || 'ninguno';
       await report(
-        `Secretos en SSM (${`/tenants/${tenant.tenant_id}/${tenant.env}/`}): creados [${secrets.created.join(', ') || 'ninguno'}], ya existentes [${secrets.existing.join(', ') || 'ninguno'}]. Los valores no se muestran.`,
+        `Secretos en SSM (${secrets.ssm_prefix}/): creados [${names(secrets.created)}], reutilizados [${names(secrets.reused)}]. Los valores no se muestran.`,
         { stage: 'Secretos del tenant listos', progress: 8 },
       );
     }

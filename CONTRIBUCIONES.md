@@ -29,13 +29,13 @@ Los commits y PRs llevan el autor real.
 | **D1** Interfaz `EngineAdapter` | `platform/platform_api/src/engines/adapter.js`: `versions`, `preview`, `apply`, `suspend`, `resume`, `destroy`, `outputs`, con el resultado común del contrato `{status, resources, outputs, tool_versions, log_ref}`. El worker solo habla con esta interfaz. |
 | **D2** Adaptadores Terraform y OpenTofu | `src/engines/terraform.js` ejecuta el módulo `infra/terraform/tenant` de P1. Usa un directorio por tenant con copia del módulo, `.terraform/` y lockfile propios, backend S3 `tenants/<id>/<env>/terraform.tfstate` con `use_lockfile` y el flujo `init → plan → revisión → apply → output`. Si el plan borraría el disco de datos fuera de un `destroy`, se detiene. |
 | Conexión al worker | `src/modules/provisioning/`: operaciones `create`, `suspend`, `resume` y `destroy` en la cola de P6 (migración `003_engines.sql`), con estados del tenant, health checks después del apply, reintento sin duplicar (RF-12) y confirmación al eliminar (RF-18). |
-| Errores comprensibles (RF-11) | `src/engines/cli.js` y `errors.js`: streaming de cada línea como evento redactado, tiempo máximo, cancelación que no corta un `apply` a medias y traducción de errores conocidos (bloqueo, credenciales, cuota de vCPU, AMIs, permisos, bucket). |
-| Secretos | `src/engines/secrets.js`: crea en SSM los `SecureString` que pide el arranque de P3 sin reemplazar los existentes y sin exponer valores. Se revisará con P6, dueño original de esta pieza. |
+| Errores comprensibles (RF-11) | Los comandos corren con el ejecutor común de P6 (`worker/services/command-runner.js`). `src/engines/errors.js` traduce los errores conocidos (bloqueo, credenciales, cuota de vCPU, AMIs, permisos, bucket) a partir de stderr. Cancelar desde la UI no corta un `apply` a medias; perder la operación sí lo detiene. |
+| Secretos | El handler `create` llama al servicio SSM de P6 (`worker/services/tenant-secrets.js`) antes del primer apply; los eventos solo muestran nombres. |
 | **D7** Registro de versiones (RF-13) | Cada despliegue guarda en `deployments` el motor y su versión, el proveedor AWS, la versión y el commit de las AMIs, el commit de las plantillas, las AMIs, los recursos y los outputs. Se ve en el panel **Infraestructura** del detalle del tenant. |
 
 ### Cómo lo verifiqué
 
-- `pnpm test:engines`: 16 pruebas sin AWS, con terraform y aws simulados (`tests/fixtures/fake-*.mjs`). Cubren la entrada común, el directorio y backend por tenant, el resultado y las versiones, la suspensión, el reintento sin cambios, los errores legibles, la cancelación durante el apply, los health checks y los secretos.
+- `pnpm test:engines`: 15 pruebas sin AWS, con terraform simulado (`tests/fixtures/fake-terraform.mjs`). Cubren la entrada común, el directorio y backend por tenant, el resultado y las versiones, la suspensión, el reintento sin cambios, los errores legibles, la cancelación y la pérdida de la operación durante el apply, y los health checks. Junto con las de P3/P6: 48 pruebas, 0 fallos.
 - Flujo completo contra PostgreSQL 16 real con las migraciones 001–003:
   - un `create` que falla, queda `failed`, se reintenta y termina `ready`;
   - `suspend` → `suspended`, `resume` → `ready`;
@@ -54,7 +54,7 @@ Wizard de 3 pasos (RF-03/07), Pulumi (D3), CloudFormation (D4/D5), comparación 
 
 1. `EngineAdapter`: el worker no depende del motor; agregar Pulumi o CloudFormation es implementar la misma interfaz.
 2. Por qué hay un directorio y un estado por tenant, y cómo un reintento completa lo pendiente sin duplicar recursos.
-3. Cómo se protegen los secretos (SSM, archivo temporal, redacción) y cómo se registran las versiones de cada despliegue.
+3. Cómo se integra con el ejecutor y el servicio SSM de P6 (secretos fuera del IaC, logs filtrados) y cómo se registran las versiones de cada despliegue.
 
 ## P3 — Packer · cloud-init · Respaldos jorge
 

@@ -2,7 +2,7 @@
 // Se arma con el tenant, su plan, los outputs de la base (P1) y las AMIs de Packer (P3).
 // No contiene secretos: las contraseñas viven en SSM y el IaC solo recibe el prefijo.
 import { readFile } from 'node:fs/promises';
-import { OperationError } from '../lib/operation-error.js';
+import { OperationError } from '../worker/errors.js';
 
 // Respaldo por plan, admitido por infra/terraform/tenant (variable "backup").
 export const BACKUP_BY_PLAN = {
@@ -22,17 +22,17 @@ const BASE_FIELDS = [
   'ssm_endpoint_id',
 ];
 
-async function readJson(path, what) {
+async function readJson(path, what, setting) {
   let text;
   try {
     text = await readFile(path, 'utf8');
   } catch {
-    throw new OperationError(`No se encontró ${what} en ${path}.`);
+    throw new OperationError('IAC_INPUT', `No se encontró ${what}. Revisa ${setting}.`);
   }
   try {
     return JSON.parse(text.replace(/^﻿/, ''));
   } catch {
-    throw new OperationError(`${what} (${path}) no es JSON válido.`);
+    throw new OperationError('IAC_INPUT', `${what} no es JSON válido. Revisa ${setting}.`);
   }
 }
 
@@ -41,12 +41,14 @@ export async function readBaseOutputs(config) {
   const raw = await readJson(
     config.IAC_BASE_OUTPUTS,
     'los outputs de la base (terraform output -json integration)',
+    'IAC_BASE_OUTPUTS',
   );
   // Acepta también el formato de `terraform output -json` completo.
   const base = raw?.integration?.value ?? raw;
   const missing = BASE_FIELDS.filter((field) => !base?.[field]);
   if (missing.length)
     throw new OperationError(
+      'IAC_INPUT',
       `Faltan campos en los outputs de la base: ${missing.join(', ')}. Vuelve a exportarlos.`,
     );
   return base;
@@ -54,7 +56,7 @@ export async function readBaseOutputs(config) {
 
 /** AMIs de Packer (infra/packer/ami-ids.json). */
 export async function readAmiIds(config) {
-  const data = await readJson(config.IAC_AMI_IDS, 'el archivo de AMIs');
+  const data = await readJson(config.IAC_AMI_IDS, 'el archivo de AMIs', 'IAC_AMI_IDS');
   const ami = {
     frontend: data?.ami?.frontend,
     backend: data?.ami?.backend,
@@ -62,6 +64,7 @@ export async function readAmiIds(config) {
   };
   if (!Object.values(ami).every((id) => /^ami-[a-f0-9]{8,17}$/.test(id ?? '')))
     throw new OperationError(
+      'IAC_INPUT',
       'El archivo de AMIs no tiene IDs válidos para frontend, backend y db.',
     );
   return {
@@ -83,14 +86,16 @@ export async function buildTenantInput(config, tenant, plan, { suspended }) {
   ]);
   if (base.region !== tenant.region)
     throw new OperationError(
+      'IAC_INPUT',
       `El tenant usa la región ${tenant.region}, pero la base está en ${base.region}.`,
     );
   if (images.region && images.region !== tenant.region)
     throw new OperationError(
+      'IAC_INPUT',
       `Las AMIs son de ${images.region}; el tenant usa ${tenant.region}.`,
     );
   if (!plan)
-    throw new OperationError(`El plan ${tenant.plan} no existe en el catálogo.`);
+    throw new OperationError('IAC_INPUT', `El plan ${tenant.plan} no existe en el catálogo.`);
   return {
     tenant_id: tenant.tenant_id,
     name: tenant.name,
