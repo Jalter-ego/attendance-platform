@@ -8,6 +8,8 @@ export interface Operation {
   cancel_requested: boolean;
   error_message: string | null;
   created_at: string;
+  result?: { summary?: string; downtime?: boolean; changes?: string[] } | null;
+  retry_of?: string | null;
 }
 
 export interface OperationEvent {
@@ -25,4 +27,9 @@ export const operationLabels: Record<string, string> = {
   suspend: 'Suspensión',
   resume: 'Reanudación',
   destroy: 'Eliminación',
+  delete: 'Eliminación',
+  upgrade: 'Actualización',
+  'preview-delete': 'Vista previa de eliminación',
+  'preview-plan': 'Vista previa de plan',
+  'plan-change': 'Cambio de plan',
 };

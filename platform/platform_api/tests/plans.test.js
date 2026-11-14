@@ -17,6 +17,7 @@ import { readConfig } from '../src/config.js';
 import { migrate } from '../src/db/migrate.js';
 import { tokenHash } from '../src/modules/auth/auth.service.js';
 import { buildTenantInput } from '../src/engines/tenant-input.js';
+import { runOnce } from '../src/worker/queue.js';
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const skip = ADMIN_URL ? false : 'define TEST_DATABASE_URL para probar contra PostgreSQL';
@@ -25,6 +26,7 @@ const DB_NAME = `plans_test_${randomBytes(4).toString('hex')}`;
 let admin;
 let pool;
 let app;
+let config;
 let adminCookie;
 let viewerCookie;
 const engineDirectories = [];
@@ -82,7 +84,8 @@ describe('catálogo de planes', { skip }, () => {
     url.pathname = `/${DB_NAME}`;
     pool = new pg.Pool({ connectionString: url.toString(), max: 4 });
     await migrate(pool);
-    app = createApp({ pool, config: readConfig({ DATABASE_URL: url.toString() }) });
+    config = readConfig({ DATABASE_URL: url.toString(), PLATFORM_DEPLOY_MODE: 'local' });
+    app = createApp({ pool, config });
     adminCookie = await session('platform_admin');
   });
 
@@ -208,13 +211,18 @@ describe('catálogo de planes', { skip }, () => {
     // El flujo real de P6 usa buildSnapshot al encolar, no buildTenantInput.
     // Verificar el primer despliegue de un tenant registrado antes de editar el plan.
     const draft = (await pool.query("SELECT id FROM tenants WHERE tenant_id='colegio-a'")).rows[0];
-    const creation = await request(createApp({ pool, config }))
+    const integrationApp = createApp({ pool, config });
+    const creation = await request(integrationApp)
       .post(`/api/v1/tenants/${draft.id}/operations`).set('Cookie', adminCookie)
       .send({ type: 'create' });
     assert.equal(creation.status, 202, JSON.stringify(creation.body));
     assert.equal(creation.body.params.deployment.input.plan_version, 1);
     assert.equal(creation.body.params.deployment.input.limits.max_students, 1000);
     assert.deepEqual(creation.body.params.deployment.input.backup, { schedule: 'daily', retention_days: 14 });
+    const cancelled = await request(integrationApp)
+      .post(`/api/v1/operations/${creation.body.id}/cancel`).set('Cookie', adminCookie).send({});
+    assert.equal(cancelled.status, 200);
+    assert.equal(cancelled.body.status, 'cancelled');
 
     // Un tenant nuevo sí toma la versión 2.
     await addTenant('colegio-nuevo', 'standard');
@@ -246,10 +254,47 @@ describe('catálogo de planes', { skip }, () => {
     assert.equal((await get('/plans/temporal')).status, 404);
   });
 
+  test('el worker aplica la revisión confirmada aunque el catálogo vuelva a cambiar', async () => {
+    const code = 'para-confirmar';
+    const tenantId = await addTenant('tienda-confirmar', 'basic');
+    const path = `/tenants/${tenantId}/plan-change`;
+    const created = await send('post', '/plans', { ...newPlan, code });
+    assert.equal(created.status, 201);
+    const execute = () => runOnce(pool, { config, stepDelayMs: 0 });
+
+    const preview = await send('post', `${path}/preview`, { plan: code });
+    assert.equal(preview.status, 202);
+    await execute();
+    const changed = await send('put', `/plans/${code}`, {
+      ...planBody(created.body), backup: { schedule: 'daily', retention_days: 30 },
+    });
+    assert.equal(changed.status, 200);
+    assert.equal((await send('post', path, { plan: code, preview_id: preview.body.id })).status, 409);
+
+    const revised = await send('post', `${path}/preview`, { plan: code });
+    assert.equal(revised.status, 202);
+    await execute();
+    const queued = await send('post', path, { plan: code, preview_id: revised.body.id });
+    assert.equal(queued.status, 202);
+    assert.equal((await send('delete', `/plans/${code}`, {})).body.error.code, 'PLAN_IN_USE');
+    const changedAgain = await send('put', `/plans/${code}`, { ...planBody(changed.body.plan), limits: { max_students: 20 } });
+    assert.equal(changedAgain.status, 200);
+    await execute();
+    const tenant = (await get(`/tenants/${tenantId}`)).body;
+    assert.equal(tenant.plan, code);
+    assert.equal(tenant.plan_snapshot.version, 2);
+    assert.deepEqual(tenant.plan_snapshot.limits, newPlan.limits);
+    assert.deepEqual(tenant.plan_snapshot.backup, { schedule: 'daily', retention_days: 30 });
+    assert.equal((await get(`/plans/${code}`)).body.tenants.outdated, 1);
+  });
+
   test('solo el admin de plataforma escribe; cualquier sesión lee la lista', async () => {
     const tenantId = (await pool.query("SELECT id FROM tenants WHERE tenant_id = 'colegio-a'")).rows[0].id;
     viewerCookie = await session('tenant_admin', tenantId);
-    assert.equal((await get('/plans', viewerCookie)).status, 200);
+    const viewerPlans = await get('/plans', viewerCookie);
+    assert.equal(viewerPlans.status, 200);
+    assert.deepEqual(viewerPlans.body.items.find((plan) => plan.code === 'standard').tenants, { total: 1, outdated: 1 });
+    assert.deepEqual(viewerPlans.body.items.find((plan) => plan.code === 'para-confirmar').tenants, { total: 0, outdated: 0 });
     assert.equal((await get('/plans/basic', viewerCookie)).status, 403);
     assert.equal((await send('post', '/plans', { ...newPlan, code: 'otro' }, viewerCookie)).status, 403);
     assert.equal((await send('put', '/plans/basic', {}, viewerCookie)).status, 403);
@@ -285,6 +330,7 @@ async function engineConfig() {
   );
   return readConfig({
     DATABASE_URL: 'postgresql://unused',
+    PLATFORM_DEPLOY_MODE: 'integration',
     IAC_STATE_BUCKET: 'attendance-state-test',
     IAC_BASE_OUTPUTS: join(dir, 'base.json'),
     IAC_AMI_IDS: join(dir, 'ami.json'),

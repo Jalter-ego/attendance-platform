@@ -4,7 +4,7 @@ import { useAuth } from '../features/auth/hooks/useAuth';
 import { Icon } from './Icon';
 
 export function PlatformLayout() {
-  const { user, logout } = useAuth();
+  const { user, mode, logout } = useAuth();
   const { pathname } = useLocation();
   const [error, setError] = useState('');
   return (
@@ -30,15 +30,17 @@ export function PlatformLayout() {
             Respaldos
             <Icon name="arrow" size={16} />
           </NavLink>
-          <NavLink to="/plans">
+          {user?.role === 'platform_admin' && <><NavLink to="/plans">
             <Icon name="layers" />
             Planes
             <Icon name="arrow" size={16} />
           </NavLink>
+          <NavLink to="/monitoring"><Icon name="activity" />Monitoreo<Icon name="arrow" size={16} /></NavLink>
+          <NavLink to="/audit"><Icon name="layers" />Auditoría<Icon name="arrow" size={16} /></NavLink></>}
         </nav>
         <div className="sidebar-bottom">
           <div className="environment-dot" />
-          Administración de Attendance
+          {mode === 'local' ? 'Modo local · AWS simulado' : 'Administración de Attendance'}
           <p>Una plataforma para todas tus instituciones.</p>
         </div>
       </aside>
@@ -50,7 +52,7 @@ export function PlatformLayout() {
               ? 'Respaldos'
               : pathname.startsWith('/plans')
                 ? 'Planes'
-                : 'Instituciones'}
+                : pathname.startsWith('/monitoring') ? 'Monitoreo' : pathname.startsWith('/audit') ? 'Auditoría' : 'Instituciones'}
           </span>
           <div className="profile">
             <span className="avatar">

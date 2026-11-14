@@ -102,6 +102,24 @@ REASON=$(reason "$F_CODE" "$B_CODE")
 BOOT_JSON=null
 if $BOOT; then
   ITEMS=()
+  PROBE='
+role=$(jq -r .vm_role /etc/attendance/tenant.json 2>/dev/null)
+case "$role" in
+  backend) link=/opt/attendance/backend-current; image_key=backend_commit ;;
+  frontend) link=/var/www/attendance; image_key=frontend_commit ;;
+  *) cat /var/lib/attendance/boot.json 2>/dev/null || echo null; exit 0 ;;
+esac
+version=$(basename "$(readlink "$link" 2>/dev/null || true)")
+version=${version#"$role-"}
+case "$version" in
+  ""|*[!0123456789abcdef]*) version=""
+esac
+if [ "${#version}" -ne 12 ]; then
+  version=$(jq -r --arg key "$image_key" ".[\$key] // empty" /etc/attendance/image.json 2>/dev/null)
+fi
+jq -c --arg version "$version" ". + {app_version: \$version}" /var/lib/attendance/boot.json 2>/dev/null || echo null
+'
+  PARAMETERS=$(jq -nc --arg probe "$PROBE" '{commands:[$probe],executionTimeout:["60"]}')
   for role in frontend backend db; do
     ID=$(aws_text ec2 describe-instances --filters "${TAGS[@]}" Name=tag:Role,Values="$role" \
       Name=instance-state-name,Values=running --query 'Reservations[].Instances[].InstanceId | [0]' || true)
@@ -110,7 +128,7 @@ if $BOOT; then
     fi
     CMD_ID=$(aws_text ssm send-command --instance-ids "$ID" --document-name AWS-RunShellScript \
       --comment "health $TENANT/$ENV_NAME $role" --timeout-seconds 60 \
-      --parameters '{"commands":["jq -c . /var/lib/attendance/boot.json 2>/dev/null || echo null"],"executionTimeout":["60"]}' \
+      --parameters "$PARAMETERS" \
       --query Command.CommandId || true)
     STATE="" OUT=""
     for _ in $(seq 1 12); do

@@ -125,10 +125,12 @@
 }
 .plan-card-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 .plan-card ul {
   margin: 8px 0 0;
@@ -191,6 +193,7 @@
   padding-left: 18px;
   font-size: 0.77rem;
   line-height: 1.9;
+  overflow-wrap: anywhere;
 }
 .provision-toggle {
   flex-direction: row;
@@ -201,6 +204,9 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.provision-toggle.fail-toggle {
+  margin-top: 12px;
 }
 .provision-toggle.disabled {
   cursor: not-allowed;
@@ -303,7 +309,7 @@
 
 @media (max-width: 1100px) {
   .wizard {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .wizard-summary {
     position: static;
@@ -316,6 +322,20 @@
   .plan-cards,
   .engine-options {
     grid-template-columns: 1fr;
+  }
+  .resource-table {
+    table-layout: fixed;
+  }
+  .resource-table td,
+  .resource-table th {
+    padding-inline: 4px;
+    overflow-wrap: anywhere;
+  }
+  .resource-table th:first-child {
+    width: 25%;
+  }
+  .resource-table th:nth-child(2) {
+    width: 28%;
   }
   .wizard-steps li > span:last-child {
     display: none;

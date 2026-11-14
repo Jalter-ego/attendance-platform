@@ -19,7 +19,7 @@ import {
   DeleteStackCommand,
   DescribeChangeSetCommand,
   DescribeStackEventsCommand,
-  DescribeStackResourcesCommand,
+  ListStackResourcesCommand,
   DescribeStacksCommand,
   ExecuteChangeSetCommand,
 } from '@aws-sdk/client-cloudformation';
@@ -155,7 +155,7 @@ export function createCloudFormationAdapter(config) {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(new OperationError(
       'IAC_TIMEOUT', 'CloudFormation alcanzó el tiempo máximo. Revisa el stack en AWS antes de reintentar; la operación remota puede continuar.',
-    )), config.IAC_TIMEOUT_S * 1000);
+    )), (config.IAC_TIMEOUT_S ?? 3600) * 1000);
     const signal = ctx.signal ? AbortSignal.any([ctx.signal, deadline.signal]) : deadline.signal;
     try {
       signal.throwIfAborted();
@@ -279,8 +279,53 @@ export function createCloudFormationAdapter(config) {
     for (;;) {
       await wait(ctx);
       const current = await getStack(ctx, cfn, stack.StackId);
-      if (!current || !/_IN_PROGRESS$/.test(current.StackStatus)) return current;
+      if (!current || current.StackStatus === 'DELETE_COMPLETE') return null;
+      if (!/_IN_PROGRESS$/.test(current.StackStatus)) return current;
     }
+  }
+
+  function assertStackOwnership(ctx, stack) {
+    if (!stack || !ctx.enforceStackOwnership) return;
+    const tags = new Map(stack.Tags?.map(({ Key, Value }) => [Key, Value]));
+    const expected = stackTags(ctx.input).filter(({ Key }) => Key !== 'Plan');
+    if (!stack.StackId || (ctx.deployedStackId && stack.StackId !== ctx.deployedStackId)
+      || expected.some(({ Key, Value }) => tags.get(Key) !== Value)) {
+      throw new OperationError('IAC_STACK_CHANGED', 'El stack no coincide con el despliegue de este tenant.');
+    }
+  }
+
+  async function existingStack(ctx, cfn) {
+    const named = await getStack(ctx, cfn, stackName(ctx.input));
+    if (named || !ctx.deployedStackId) return named;
+    const saved = await getStack(ctx, cfn, ctx.deployedStackId);
+    return saved?.StackStatus === 'DELETE_COMPLETE' ? null : saved;
+  }
+
+  async function destructionPreview(ctx, cfn, stack) {
+    assertStackOwnership(ctx, stack);
+    const resources = [];
+    if (stack) {
+      let token;
+      do {
+        const page = await send(ctx, cfn, new ListStackResourcesCommand({ StackName: stack.StackId, NextToken: token }));
+        resources.push(...(page.StackResourceSummaries ?? []));
+        token = page.NextToken;
+      } while (token);
+    }
+    resources.sort((left, right) => left.LogicalResourceId.localeCompare(right.LogicalResourceId));
+    const stackId = stack?.StackId ?? null;
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      stackId,
+      status: stack?.StackStatus,
+      revision: stack?.LastUpdatedTime ?? stack?.CreationTime,
+      resources: resources.map((item) => [
+        item.LogicalResourceId, item.PhysicalResourceId, item.ResourceType, item.ResourceStatus,
+      ]),
+    })).digest('hex');
+    const summary = summarizeChanges(resources.map(({ LogicalResourceId, ResourceType }) => ({
+      ResourceChange: { Action: 'Remove', LogicalResourceId, ResourceType },
+    })));
+    return { ...summary, stack_id: stackId, fingerprint };
   }
 
   async function validateImages(ctx, ec2, input) {
@@ -426,7 +471,8 @@ export function createCloudFormationAdapter(config) {
       await validateImages(ctx, aws.ec2, input);
       const cidr = await vpcCidr(ctx, aws.ec2, input);
       const toolVersions = await versions(ctx);
-      let stack = await waitStable(ctx, aws.cfn, await getStack(ctx, aws.cfn, stackName(input)));
+      let stack = await waitStable(ctx, aws.cfn, await existingStack(ctx, aws.cfn));
+      assertStackOwnership(ctx, stack);
       // Una creación fallida deja el stack en ROLLBACK_COMPLETE, sin recursos y sin poder
       // actualizarse: se elimina para que el reintento cree uno nuevo (RF-12).
       if (stack?.StackStatus === 'ROLLBACK_COMPLETE') {
@@ -496,8 +542,9 @@ export function createCloudFormationAdapter(config) {
         { stage: state === 'stopped' ? 'Deteniendo servidores' : 'Arrancando servidores', progress: 20 },
       );
       const toolVersions = await versions(ctx);
-      const stack = await waitStable(ctx, aws.cfn, await getStack(ctx, aws.cfn, stackName(input)));
+      const stack = await waitStable(ctx, aws.cfn, await existingStack(ctx, aws.cfn));
       if (!stack) throw new OperationError('ENGINE_FAILED', 'El stack del tenant no existe. Créalo primero.');
+      assertStackOwnership(ctx, stack);
       const ids = Object.values((await currentOutputs(ctx, aws.ec2, input, stack)).instance_ids);
       await send(
         ctx,
@@ -523,7 +570,7 @@ export function createCloudFormationAdapter(config) {
     }
   }
 
-  async function destroy(ctx) {
+  async function destroy(ctx, { expectedPreview } = {}) {
     const { input } = ctx;
     const aws = clients(input);
     try {
@@ -532,7 +579,13 @@ export function createCloudFormationAdapter(config) {
         progress: 20,
       });
       const toolVersions = await versions(ctx);
-      const stack = await waitStable(ctx, aws.cfn, await getStack(ctx, aws.cfn, stackName(input)));
+      const stack = await waitStable(ctx, aws.cfn, await existingStack(ctx, aws.cfn));
+      assertStackOwnership(ctx, stack);
+      if (expectedPreview && (stack || expectedPreview.stack_id === null)) {
+        const current = await destructionPreview(ctx, aws.cfn, stack);
+        if (current.stack_id !== expectedPreview.stack_id || current.fingerprint !== expectedPreview.fingerprint)
+          throw new OperationError('IAC_PREVIEW_CHANGED', 'El stack cambió desde la vista previa. Genera otra vista previa antes de eliminar.');
+      }
       if (stack) {
         const token = randomUUID();
         await send(ctx, aws.cfn, new DeleteStackCommand({ StackName: stack.StackId, ClientRequestToken: token }));
@@ -549,20 +602,8 @@ export function createCloudFormationAdapter(config) {
     const { input } = ctx;
     const aws = clients(input);
     try {
-      const stack = await getStack(ctx, aws.cfn, stackName(input));
-      if (forDestroy) {
-        if (!stack) return { totals: { delete: 0 }, changes: [], data_volumes_deleted: [] };
-        const { StackResources = [] } = await send(
-          ctx,
-          aws.cfn,
-          new DescribeStackResourcesCommand({ StackName: stack.StackId }),
-        );
-        return summarizeChanges(
-          StackResources.map((item) => ({
-            ResourceChange: { Action: 'Remove', LogicalResourceId: item.LogicalResourceId, ResourceType: item.ResourceType },
-          })),
-        );
-      }
+      const stack = await existingStack(ctx, aws.cfn);
+      if (forDestroy) return destructionPreview(ctx, aws.cfn, await waitStable(ctx, aws.cfn, stack));
       const cidr = await vpcCidr(ctx, aws.ec2, input);
       const type = !stack || stack.StackStatus === 'REVIEW_IN_PROGRESS' ? 'CREATE' : 'UPDATE';
       const plan = await changeSet(ctx, aws.cfn, input, cidr, type);
@@ -587,12 +628,13 @@ export function createCloudFormationAdapter(config) {
     apply: (ctx) => bounded(ctx, apply),
     suspend: (ctx) => bounded(ctx, (active) => power(active, 'stopped')),
     resume: (ctx) => bounded(ctx, (active) => power(active, 'running')),
-    destroy: (ctx) => bounded(ctx, destroy),
+    destroy: (ctx, options) => bounded(ctx, (active) => destroy(active, options)),
     outputs: (ctx) => bounded(ctx, async (active) => {
       const aws = clients(active.input);
       try {
-        const stack = await getStack(active, aws.cfn, stackName(active.input));
+        const stack = await existingStack(active, aws.cfn);
         if (!stack) throw new OperationError('ENGINE_FAILED', 'El stack del tenant no existe.');
+        assertStackOwnership(active, stack);
         return await currentOutputs(active, aws.ec2, active.input, stack);
       } finally {
         aws.close();

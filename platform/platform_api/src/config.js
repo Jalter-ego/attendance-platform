@@ -10,7 +10,6 @@ const defaultBash =
 const defaultBackupScript = fileURLToPath(
   new URL('../../../infra/backups/tenant-backup.sh', import.meta.url),
 );
-// Motores IaC (P2): rutas del monorepo que usa el worker. Todas se pueden sobrescribir.
 const repoPath = (relative) =>
   fileURLToPath(new URL(`../../../${relative}`, import.meta.url));
 
@@ -35,16 +34,11 @@ const schema = z.object({
   BACKUP_BASH: z.string().trim().default(defaultBash),
   BACKUP_SCRIPT: z.string().trim().default(defaultBackupScript),
   BACKUP_TIMEOUT_S: z.coerce.number().int().min(60).max(3600).default(900),
-  // Motores IaC (P2). El bucket del estado es el que crea infra/bootstrap; vacío impide
-  // ejecutar operaciones de infraestructura (el resto de la plataforma funciona igual).
   IAC_STATE_BUCKET: z.string().trim().default(''),
   IAC_BASE_OUTPUTS: z.string().trim().default(repoPath('.local/base.outputs.json')),
   IAC_AMI_IDS: z.string().trim().default(repoPath('infra/packer/ami-ids.json')),
   IAC_MODULE_DIR: z.string().trim().default(repoPath('infra/terraform/tenant')),
-  IAC_CLOUD_INIT_TEMPLATE: z
-    .string()
-    .trim()
-    .default(repoPath('infra/cloud-init/user-data.yaml.tftpl')),
+  IAC_CLOUD_INIT_TEMPLATE: z.string().trim().default(repoPath('infra/cloud-init/user-data.yaml.tftpl')),
   IAC_PLAN_PREVIEW: z.string().trim().default(repoPath('infra/terraform/plan_preview.py')),
   IAC_RUNS_DIR: z.string().trim().default(repoPath('.local/runs')),
   IAC_CFN_TEMPLATE: z.string().trim().default(repoPath('infra/cloudformation/tenant.yaml')),
@@ -59,10 +53,15 @@ const schema = z.object({
   DEPLOYMENT_WORK_DIR: z.string().trim().optional(),
   TERRAFORM_BIN: z.string().trim().default('terraform'),
   TOFU_BIN: z.string().trim().default('tofu'),
-  PYTHON_BIN: z
-    .string()
-    .trim()
-    .default(process.platform === 'win32' ? 'python' : 'python3'),
+  PYTHON_BIN: z.string().trim().default(process.platform === 'win32' ? 'python' : 'python3'),
+  PLATFORM_DEPLOY_MODE: z.enum(['local', 'integration']).default('local'),
+  PLATFORM_BASE_OUTPUT_FILE: z.string().trim().optional(),
+  PLATFORM_STATE_BUCKET: z.string().trim().optional(),
+  PLATFORM_STATE_REGION: z.string().trim().optional(),
+  PLATFORM_WORK_ROOT: z.string().trim().optional(),
+  PLATFORM_AMI_FILE: z.string().trim().optional(),
+  PLATFORM_WEB_DIST: z.string().trim().optional(),
+  PLATFORM_WEBHOOK_TOKEN: z.string().trim().min(24).optional(),
 });
 
 export function readConfig(env = process.env) {

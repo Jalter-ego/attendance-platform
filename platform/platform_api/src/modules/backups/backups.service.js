@@ -114,6 +114,13 @@ export function mergeBackups(list) {
 
 export async function listBackups(pool, config, user, id) {
   const tenant = await getTenant(pool, user, id);
+  if (config.PLATFORM_DEPLOY_MODE === 'local') {
+    const { rows } = await pool.query(
+      "SELECT id, id AS backup_id, created_at, 'dump' AS kind, true AS restorable FROM local_backups WHERE tenant_id=$1 ORDER BY created_at DESC",
+      [id],
+    );
+    return { tenant_id: tenant.tenant_id, env: tenant.env, items: rows };
+  }
   let list;
   try {
     list = await runBackupScript(config, 'list', tenant, { timeoutMs: 90000 });

@@ -13,6 +13,7 @@ import {
 } from '../src/engines/cloudformation.js';
 import { BACKUP_BY_PLAN } from '../src/engines/tenant-input.js';
 import { OperationError, OperationCancelled } from '../src/worker/errors.js';
+import { runCloudFormationLifecycle } from '../src/worker/services/cloudformation-lifecycle.js';
 import { fakeCloudFormation } from './fixtures/fake-cloudformation.js';
 import { publicDeployment } from '../src/modules/deployments/deployment-config.js';
 
@@ -191,6 +192,56 @@ test('eliminar borra el stack y la vista previa avisa del disco de datos', async
   const result = await cfn.destroy(context());
   assert.ok(aws.calls.some((call) => call.name === 'DeleteStackCommand'));
   assert.deepEqual(result.resources, []);
+});
+
+test('el ciclo de P6 conserva el ARN, verifica salud y rechaza un disco cambiado desde la vista previa', async () => {
+  const aws = fakeAws({ changes: [add('DbInstance')] });
+  const config = { PLATFORM_DEPLOY_MODE: 'integration', IAC_TIMEOUT_S: 5 };
+  const events = [];
+  const run = (type, extra = {}) => runCloudFormationLifecycle({
+    config, tenant: input, plan: {}, operation: { id: 'test', type }, report: async () => {}, ...extra,
+  }, {
+    makeAdapter: () => adapter(aws),
+    loadInput: async () => ({ ...input }),
+    pinInput: async () => input,
+    prepareSecrets: async () => { events.push('secrets'); },
+    checkHealth: async (urls) => { events.push(urls); },
+  });
+  const created = await run('create');
+  assert.equal(created.tenantStatus, 'ready');
+  assert.equal(created.deployment.outputs.mode, 'integration');
+  assert.deepEqual(events, ['secrets', {
+    frontend: 'http://198.51.100.40/healthz', backend: 'http://198.51.100.40/core/api/v1/health',
+  }]);
+  const deployment = created.deployment;
+  const suspended = await run('suspend', { deployment });
+  assert.equal(suspended.deployment.outputs.health.database, 'paused');
+  const resumed = await run('resume', { deployment: suspended.deployment });
+  assert.equal(resumed.deployment.outputs.urls.frontend, 'http://198.51.100.41/');
+  await assert.rejects(run('plan-change', { deployment }), { code: 'IAC_ENGINE_UNSUPPORTED' });
+  const { result: preview } = await run('preview-delete', { deployment });
+  assert.match(preview.fingerprint, /^[a-f0-9]{64}$/);
+  assert.deepEqual(preview.changes, ['Eliminar DbInstance (AWS::EC2::Instance)', 'Eliminar DbVolume (AWS::EC2::Volume)']);
+  aws.setVolumeId('vol-updated');
+  await assert.rejects(run('delete', { deployment, preview }), { code: 'IAC_PREVIEW_CHANGED' });
+  assert.equal(aws.calls.filter((call) => call.name === 'DeleteStackCommand').length, 0);
+  const { result: fresh } = await run('preview-delete', { deployment });
+  assert.equal((await run('delete', { deployment, preview: fresh })).tenantStatus, 'deleted');
+  assert.equal(aws.calls.find((call) => call.name === 'DeleteStackCommand').params.StackName, fresh.stack_id);
+  assert.equal((await run('delete', { deployment, preview: fresh })).tenantStatus, 'deleted');
+});
+
+test('la vista previa rechaza un stack reemplazado o con etiquetas de otro tenant', async () => {
+  const aws = fakeAws({ existing: 'CREATE_COMPLETE' });
+  const cfn = adapter(aws);
+  await assert.rejects(cfn.preview({
+    ...context(), enforceStackOwnership: true, deployedStackId: 'different-id',
+  }, { destroy: true }), { code: 'IAC_STACK_CHANGED' });
+  aws.setStack({ StackId: 'arn:stack/demo/1', StackStatus: 'CREATE_COMPLETE', Tags: [] });
+  await assert.rejects(cfn.preview({
+    ...context(), enforceStackOwnership: true, deployedStackId: 'arn:stack/demo/1',
+  }, { destroy: true }), { code: 'IAC_STACK_CHANGED' });
+  assert.ok(!aws.calls.some((call) => call.name === 'ListStackResourcesCommand'));
 });
 
 test('rechaza AMIs sin la etiqueta Role correcta', async () => {

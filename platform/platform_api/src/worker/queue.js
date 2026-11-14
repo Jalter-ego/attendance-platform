@@ -5,35 +5,29 @@ import { appendEvent } from '../modules/operations/operations.service.js';
 import { redact } from '../lib/redact.js';
 import { CommandError } from './services/command-runner.js';
 import { OperationCancelled, OperationError, LeaseLost } from './errors.js';
+import { isLifecycle, isLocalBackup, persistLifecycle, runLifecycle } from './services/lifecycle.js';
 import { runCreateOperation } from './handlers/create.handler.js';
 import { createEngineAdapters } from './engines/index.js';
-import { finishCreation } from '../modules/deployments/deployments.service.js';
+import { finishCreation, recoverLegacyTransition } from '../modules/deployments/deployments.service.js';
 import {
   runBackupOperation,
   ScriptError,
 } from '../modules/backups/backups.service.js';
-import { runInfraOperation } from '../modules/provisioning/provisioning.service.js';
 
 // Handlers por tipo de operación: reciben { pool, config, operation, report, signal } y
 // devuelven el resultado JSON que se guarda en operations.result.
-const handlers = {
-  backup: runBackupOperation,
-  restore: runBackupOperation,
-  // P2: motores IaC (src/engines) a través de provisioning.service.js.
-  create: runCreateOperation,
-  suspend: runInfraOperation,
-  resume: runInfraOperation,
-  destroy: runInfraOperation,
-};
+const handlers = { backup: runBackupOperation, restore: runBackupOperation };
 
 export async function recoverStale(pool, staleMs) {
   return transaction(pool, async (client) => {
     const result = await client.query(
-      "UPDATE operations SET status = 'failed', stage = 'Worker interrumpido', error_message = 'El worker dejó de responder. Revisa la operación antes de reintentar.', worker_id = NULL, finished_at = now() WHERE status = 'running' AND heartbeat_at < now() - ($1 * interval '1 millisecond') RETURNING id, type, tenant_id",
+      "UPDATE operations SET status = 'failed', stage = 'Worker interrumpido', error_message = 'El worker dejó de responder. Revisa la operación antes de reintentar.', worker_id = NULL, finished_at = now() WHERE status = 'running' AND heartbeat_at < now() - ($1 * interval '1 millisecond') RETURNING id, tenant_id, type, params",
       [staleMs],
     );
     for (const operation of result.rows) {
-      await finishCreation(client, operation, 'failed');
+      if (isSnapshotCreate(operation)) await finishCreation(client, operation, 'failed');
+      else if (operation.type === 'create') await persistLifecycle(client, operation, null, 'failed');
+      else await recoverLegacyTransition(client, operation);
       await appendEvent(
         client,
         operation.id,
@@ -84,7 +78,9 @@ const steps = [
   ],
 ];
 
-// Los handlers de los motores (P2) están en `handlers`. El diagnóstico nunca llama a AWS.
+const isSnapshotCreate = (operation) => operation.type === 'create' && Boolean(operation.params?.deployment);
+
+// El diagnóstico y las simulaciones locales nunca llaman a AWS.
 export async function runOnce(
   pool,
   { workerId = randomUUID(), signal, stepDelayMs = 350, heartbeatMs = 5000, config,
@@ -97,7 +93,10 @@ export async function runOnce(
     ? AbortSignal.any([signal, lease.signal])
     : lease.signal;
   let heartbeat = Promise.resolve();
+  let checkingLease = false;
   const timer = setInterval(() => {
+    if (checkingLease) return;
+    checkingLease = true;
     heartbeat = pool
       .query(
         "UPDATE operations SET heartbeat_at = now() WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING cancel_requested",
@@ -107,12 +106,14 @@ export async function runOnce(
         if (!result.rowCount) lease.abort(new LeaseLost());
         else if (result.rows[0].cancel_requested) lease.abort(new OperationCancelled());
       })
-      .catch(() => lease.abort(new LeaseLost()));
+      .catch(() => lease.abort(new LeaseLost()))
+      .finally(() => { checkingLease = false; });
   }, heartbeatMs);
   timer.unref();
   let status = 'succeeded';
   let errorMessage = null;
   let output = null;
+  let lifecycle;
   // Registra un evento y, si se indica, la etapa/progreso. Corta si se pidió cancelar o si
   // este worker perdió la operación.
   const report = (message, { stage = null, progress = null, level = 'info' } = {}) =>
@@ -123,7 +124,7 @@ export async function runOnce(
       );
       if (!result.rowCount) throw new LeaseLost();
       if (result.rows[0].cancel_requested) throw new OperationCancelled();
-      await appendEvent(client, operation.id, level, message);
+      await appendEvent(client, operation.id, level, message, stage === null ? null : redact(stage).slice(0, 100));
     });
   try {
     if (operation.type === 'diagnostic') {
@@ -132,14 +133,21 @@ export async function runOnce(
         await sleep(stepDelayMs, undefined, { signal: jobSignal });
         await report(message, { stage, progress });
       }
+    } else if (isSnapshotCreate(operation)) {
+      if (config?.PLATFORM_DEPLOY_MODE !== 'integration')
+        throw new OperationError('IAC_MODE', 'Este trabajo fue registrado para infraestructura real. Reintenta desde el entorno de integración.');
+      output = await runCreateOperation({ pool, config, operation, workerId, report, signal: jobSignal, adapters, creationServices });
+    } else if (isLifecycle(operation.type) || isLocalBackup(operation.type, config)) {
+      lifecycle = await runLifecycle({ pool, config, operation, report, stepDelayMs, signal: jobSignal, creationServices });
+      if (lifecycle.failure) throw new OperationError('SIMULATED_FAILURE', lifecycle.failure);
+      output = lifecycle.result ?? null;
+    } else if (operation.type === 'destroy') {
+      throw new OperationError('PREVIEW_REQUIRED', 'Genera una vista previa nueva y confirma la eliminación.');
     } else if (handlers[operation.type]) {
       output = await handlers[operation.type]({
         pool,
         config,
         operation,
-        workerId,
-        adapters,
-        creationServices,
         report,
         signal: jobSignal,
       });
@@ -162,7 +170,7 @@ export async function runOnce(
   }
   await transaction(pool, async (client) => {
     const result = await client.query(
-      "UPDATE operations SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE $3 END, stage = CASE WHEN cancel_requested OR $3 = 'cancelled' THEN 'Cancelada' WHEN $3 = 'succeeded' THEN 'Completada' ELSE 'Fallida' END, progress = CASE WHEN NOT cancel_requested AND $3='succeeded' THEN 100 ELSE progress END, error_message = CASE WHEN cancel_requested THEN NULL ELSE $4 END, result = $5::jsonb, finished_at = now(), worker_id = NULL WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING status, type, tenant_id, id",
+      "UPDATE operations SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE $3 END, stage = CASE WHEN cancel_requested OR $3 = 'cancelled' THEN 'Cancelada' WHEN $3 = 'succeeded' THEN 'Completada' ELSE 'Fallida' END, error_message = CASE WHEN cancel_requested THEN NULL ELSE $4 END, result = CASE WHEN cancel_requested THEN NULL ELSE $5::jsonb END, progress = CASE WHEN NOT cancel_requested AND $3 = 'succeeded' THEN 100 ELSE progress END, finished_at = now(), worker_id = NULL WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING status",
       [
         operation.id,
         workerId,
@@ -172,7 +180,9 @@ export async function runOnce(
       ],
     );
     if (result.rowCount) {
-      await finishCreation(client, result.rows[0], result.rows[0].status);
+      if (isSnapshotCreate(operation)) await finishCreation(client, operation, result.rows[0].status);
+      else if (isLifecycle(operation.type) || lifecycle) await persistLifecycle(client, operation, lifecycle, result.rows[0].status);
+      else if (operation.type === 'destroy') await recoverLegacyTransition(client, operation);
       await appendEvent(
         client,
         operation.id,

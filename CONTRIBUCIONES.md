@@ -56,7 +56,7 @@ Los commits y PRs llevan el autor real.
 
 - CloudFormation: `cfn-lint` sin hallazgos y `pnpm test:cloudformation` (10 pruebas con AWS simulado: crear, sin cambios, bloqueo por pérdida de datos, error legible, reintento tras `ROLLBACK_COMPLETE`, suspender/reanudar por EC2, eliminar, validación de AMIs).
 
-Pendiente de probar en AWS: crear un tenant real desde la plataforma con Terraform y con CloudFormation (requiere `IAC_STATE_BUCKET`, los outputs de la base y credenciales válidas del worker) y OpenTofu con el CLI instalado.
+Pendiente de probar en AWS: el ciclo integrado del panel con Terraform y OpenTofu y el adaptador de CloudFormation de P2. En la integración con P6, el asistente registra CloudFormation como borrador y en local permite simularlo. El adaptador y la plantilla se documentan en [CloudFormation](infra/cloudformation/README.md).
 
 ### Pendiente
 

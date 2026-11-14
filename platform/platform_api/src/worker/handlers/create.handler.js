@@ -15,11 +15,19 @@ export async function runCreateOperation({
   const adapter = getEngineAdapter(snapshot.input.engine, adapters);
   const active = () => ensureActive(signal);
   const context = await prepareDeploymentContext({ config, tenant, snapshot, operation, signal, report });
+  if (tenant.engine === 'cloudformation') {
+    const { rows: [previous] } = await pool.query(
+      "SELECT outputs->>'stack_id' AS stack_id FROM deployments WHERE tenant_id=$1 AND outputs ? 'stack_id' ORDER BY created_at DESC,id DESC LIMIT 1",
+      [tenant.id],
+    );
+    context.enforceStackOwnership = true;
+    context.deployedStackId = previous?.stack_id;
+  }
   // Validar binarios/prerrequisitos antes de escribir secretos (opcional para P2).
   await adapter.preflight?.(context);
   active();
   await report('Preparando las credenciales propias de la institución.', { stage: 'Preparando secretos', progress: 15 });
-  await (creationServices.prepareSecrets ?? ensureTenantSecrets)(snapshot.input, { signal, projectName: snapshot.input.base.project_name });
+  await (creationServices.prepareSecrets ?? ensureTenantSecrets)(snapshot.input, { signal, projectName: snapshot.input.base.project_name, client: config.ssmClient });
   await report('Creando o completando los recursos con el estado de esta institución.', { stage: 'Creando infraestructura', progress: 25 });
   active();
   const applied = await adapter.apply(context);
@@ -28,6 +36,10 @@ export async function runCreateOperation({
   const outputs = applied.outputs ?? await adapter.outputs(context);
   const versions = applied.tool_versions ?? await adapter.versions(context);
   const deployment = publicDeployment(outputs, versions, snapshot);
+  if (snapshot.backend.type !== 'cloudformation') {
+    const { bucket, region, key } = snapshot.backend;
+    deployment.outputs.state = { tenant: tenant.id, engine: tenant.engine, bucket, region, key };
+  }
   const deploymentId = await saveDeployment(pool, operation, workerId, deployment);
   await report('Recursos y accesos guardados. Esperando que Attendance termine de arrancar.', { stage: 'Comprobando salud', progress: 80 });
   active();
@@ -38,9 +50,11 @@ export async function runCreateOperation({
   active();
   // Guardar solamente el contrato validado por checkTenantHealth; nunca body/boot.
   const saved = await pool.query(
-    `UPDATE deployments SET health = $3 WHERE id = $1 AND operation_id = $2
+    `UPDATE deployments SET health = $3,
+       outputs = jsonb_set(outputs, '{health}', $5::jsonb) WHERE id = $1 AND operation_id = $2
      AND EXISTS (SELECT 1 FROM operations WHERE id=$2 AND worker_id=$4 AND status='running')`,
-    [deploymentId, operation.id, health, workerId],
+    [deploymentId, operation.id, health, workerId, health.status === 'healthy'
+      ? { frontend: 'healthy', backend: 'healthy', database: 'healthy' } : {}],
   );
   if (!saved.rowCount) throw new LeaseLost();
   active();

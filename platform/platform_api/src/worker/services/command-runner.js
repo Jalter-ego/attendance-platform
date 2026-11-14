@@ -18,7 +18,7 @@ const sensitiveName = /password|passwd|secret|token|access[_-]?key|private[_-]?k
 function commandEnv(extra) {
   const env = { ...process.env, ...extra };
   for (const key of Object.keys(env)) {
-    if (/^(DATABASE_URL|DB_|PGPASSWORD|BOOTSTRAP_ADMIN_|JWT_|SESSION_|NODE_OPTIONS|TF_LOG)/i.test(key))
+    if (/^(DATABASE_URL|DB_|PGPASSWORD|BOOTSTRAP_ADMIN_|JWT_|SESSION_|PLATFORM_WEBHOOK_TOKEN|NODE_OPTIONS|TF_LOG)/i.test(key))
       delete env[key];
   }
   return { ...env, AWS_PAGER: '', AWS_CLI_AUTO_PROMPT: 'off', NO_COLOR: '1' };

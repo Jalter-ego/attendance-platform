@@ -55,3 +55,10 @@ export async function transaction(pool, callback) {
     client.release();
   }
 }
+
+export async function assertDeploymentMode(pool, config) {
+  await pool.query('INSERT INTO deployment_mode(mode) VALUES ($1) ON CONFLICT DO NOTHING', [config.PLATFORM_DEPLOY_MODE]);
+  const { rows: [settings] } = await pool.query('SELECT mode FROM deployment_mode');
+  if (settings.mode !== config.PLATFORM_DEPLOY_MODE)
+    throw new Error('La base está configurada para otro modo de aprovisionamiento. Usa una base dedicada.');
+}

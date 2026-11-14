@@ -1,5 +1,8 @@
 import type { Operation } from '../operations/types';
 
+type ServiceHealth = Record<string, string | boolean>;
+type DeploymentHealth = ServiceHealth | { status: 'healthy' | 'unhealthy'; checks: { frontend?: { status: number }; backend?: { status: number } } };
+
 export interface Tenant {
   id: string;
   tenant_id: string;
@@ -12,7 +15,7 @@ export interface Tenant {
   // P4: cualquier plan del catálogo (pantalla Planes), no solo los 3 de la semilla.
   plan: string;
   // Copia del plan con la que se creó (migración 004): versión y nombre que conserva.
-  plan_snapshot?: { code: string; name: string; version: number };
+  plan_snapshot?: Plan & { version: number };
   status: string;
   created_at: string;
 }
@@ -26,9 +29,11 @@ export interface TenantDetail extends Tenant {
     engine: Tenant['engine'];
     status: 'provisioning' | 'ready' | 'suspended' | 'deleted' | 'failed';
     ami: Record<string, string>;
-    outputs: { urls?: Record<string, string | null>; stack_name?: string; stack_id?: string };
+    outputs: { urls?: Record<string, string | null>; health?: ServiceHealth; stack_name?: string; stack_id?: string };
+    health?: DeploymentHealth;
+    operation_id?: string | null;
     resources: { type: string; role: string; id: string }[];
-    tool_versions: Record<string, string | null>;
+    tool_versions: Record<string, string | Record<string, string> | null>;
   }[];
 }
 
@@ -46,6 +51,8 @@ export interface Engine {
   code: Tenant['engine'];
   label: string;
   available: boolean;
+  message?: string | null;
+  actions?: string[];
 }
 export const planNames: Record<string, string> = {
   basic: 'Básico',

@@ -1,19 +1,24 @@
 // Simula terraform/tofu para las pruebas de los adaptadores. El modo sale de FAKE_TF_MODE y
 // cada invocación se agrega a FAKE_TF_LOG (una línea JSON por llamada).
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_TF_MODE ?? 'ok';
 const chdir = args.find((arg) => arg.startsWith('-chdir='))?.slice(7);
 const command = args.find((arg) => !arg.startsWith('-'));
+const file = args.find((arg) => arg.startsWith('-var-file='))?.slice(10);
+const variables = file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+const backendPath = args.find((arg) => arg.startsWith('-backend-config='))?.slice(16);
+const backend = backendPath && existsSync(backendPath) ? readFileSync(backendPath, 'utf8') : null;
 if (process.env.FAKE_TF_LOG)
-  appendFileSync(process.env.FAKE_TF_LOG, `${JSON.stringify({ command, args, chdir,
+  appendFileSync(process.env.FAKE_TF_LOG, `${JSON.stringify({ command, args, chdir, variables, backend,
     workspace: process.env.TF_WORKSPACE, extraPlanArgs: process.env.TF_CLI_ARGS_plan })}\n`);
 
 const health = process.env.FAKE_HEALTH_BASE ?? 'http://127.0.0.1:9';
 switch (command) {
   case 'init':
+    if (!chdir && !existsSync('.terraform.lock.hcl')) writeFileSync('.terraform.lock.hcl', '# fixture lock\n');
     console.log('Initializing the backend...');
     console.log('Terraform has been successfully initialized!');
     break;
@@ -41,7 +46,7 @@ switch (command) {
       process.exit(1);
     }
     const out = args.find((arg) => arg.startsWith('-out='))?.slice(5);
-    if (out) writeFileSync(out, 'fake plan');
+    if (out) writeFileSync(out, JSON.stringify({ destroy: args.includes('-destroy'), suspended: variables?.suspended ?? false }));
     if (mode === 'nochange') {
       console.log('No changes. Your infrastructure matches the configuration.');
     } else {
@@ -50,7 +55,16 @@ switch (command) {
     }
     break;
   }
+  case 'show': {
+    const plan = JSON.parse(readFileSync(args.at(-1), 'utf8'));
+    console.log(JSON.stringify({ format_version: '1.2', complete: true, applyable: true,
+      resource_changes: [{ address: 'aws_instance.db', type: 'aws_instance', mode: 'managed',
+        change: { actions: plan.destroy ? ['delete'] : ['update'] } }],
+    }));
+    break;
+  }
   case 'apply':
+    if (!chdir && existsSync(args.at(-1))) writeFileSync('.fake-tf-state', readFileSync(args.at(-1), 'utf8'));
     console.log('aws_instance.db: Creating...');
     if (mode === 'slowapply') {
       for (let i = 0; i < 3; i += 1) {
@@ -62,7 +76,8 @@ switch (command) {
     if (process.env.FAKE_TF_LOG)
       appendFileSync(process.env.FAKE_TF_LOG, `${JSON.stringify({ command: 'apply-finished' })}\n`);
     break;
-  case 'output':
+  case 'output': {
+    const suspended = existsSync('.fake-tf-state') ? JSON.parse(readFileSync('.fake-tf-state', 'utf8')).suspended : false;
     console.log(
       JSON.stringify({
         urls: {
@@ -77,11 +92,12 @@ switch (command) {
         instance_ids: { value: { frontend: 'i-11111111111111111', backend: 'i-22222222222222222', db: 'i-33333333333333333' }, sensitive: false },
         private_ips: { value: { frontend: '10.0.1.10', backend: '10.0.2.10', db: '10.0.2.20' }, sensitive: false },
         db_volume_id: { value: 'vol-44444444444444444', sensitive: false },
-        suspended: { value: false, sensitive: false },
+        suspended: { value: suspended, sensitive: false },
         secret_thing: { value: 'no-debe-aparecer', sensitive: true },
       }),
     );
     break;
+  }
   default:
     console.error(`fake-terraform: comando no simulado ${command}`);
     process.exit(2);

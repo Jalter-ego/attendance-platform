@@ -1,4 +1,6 @@
 // Clientes de AWS simulados, compartidos por pruebas unitarias y de integración.
+import { stackTags } from '../../src/engines/cloudformation.js';
+
 const notFound = (name) =>
   Object.assign(new Error(`Stack with id ${name} does not exist`), { name: 'ValidationError' });
 
@@ -21,8 +23,9 @@ export function fakeCloudFormation(input, scenario = {}) {
   let token;
   let stalePolls = scenario.staleStablePolls ?? 0;
   let stack = scenario.existing
-    ? { StackId: stackArn, StackStatus: scenario.existing, Outputs: [] }
+    ? { StackId: stackArn, StackStatus: scenario.existing, Outputs: [], Tags: stackTags(input) }
     : null;
+  let volumeId = 'vol-44444444444444444';
   let events = [];
   const outputs = [
     ['FrontendInstanceId', 'i-11111111111111111'],
@@ -57,7 +60,7 @@ export function fakeCloudFormation(input, scenario = {}) {
           return { Stacks: [stack] };
         case 'CreateChangeSetCommand':
           if (params.ChangeSetType === 'CREATE')
-            stack = { StackId: stackArn, StackStatus: 'REVIEW_IN_PROGRESS', Outputs: [] };
+            stack = { StackId: stackArn, StackStatus: 'REVIEW_IN_PROGRESS', Outputs: [], Tags: params.Tags };
           return { Id: 'cs-1' };
         case 'DescribeChangeSetCommand': {
           if (scenario.stuckChangeSet) return { Status: 'CREATE_IN_PROGRESS' };
@@ -97,6 +100,10 @@ export function fakeCloudFormation(input, scenario = {}) {
               { LogicalResourceId: 'DbVolume', ResourceType: 'AWS::EC2::Volume' },
             ],
           };
+        case 'ListStackResourcesCommand':
+          return params.NextToken
+            ? { StackResourceSummaries: [{ LogicalResourceId: 'DbVolume', PhysicalResourceId: volumeId, ResourceType: 'AWS::EC2::Volume' }] }
+            : { StackResourceSummaries: [{ LogicalResourceId: 'DbInstance', PhysicalResourceId: 'i-33333333333333333', ResourceType: 'AWS::EC2::Instance' }], NextToken: 'next-page' };
         default:
           throw new Error(`cfn simulado: ${name}`);
       }
@@ -142,5 +149,5 @@ export function fakeCloudFormation(input, scenario = {}) {
       }
     },
   };
-  return { cfn, ec2, calls, outputs, stackArn, setStack: (value) => (stack = value) };
+  return { cfn, ec2, calls, outputs, stackArn, setStack: (value) => (stack = value), setVolumeId: (value) => (volumeId = value) };
 }

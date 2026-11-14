@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { readConfig } from '../config.js';
-import { createPool } from '../db/pool.js';
+import { assertDeploymentMode, createPool } from '../db/pool.js';
 import { recoverStale, runOnce } from './queue.js';
 import { databaseErrorMessage } from '../db/diagnostics.js';
 
@@ -13,6 +13,7 @@ process.once('SIGINT', () => controller.abort());
 process.once('SIGTERM', () => controller.abort());
 console.log('Worker iniciado. Esperando operaciones.');
 try {
+  await assertDeploymentMode(pool, config);
   while (!controller.signal.aborted) {
     try {
       await recoverStale(pool, config.WORKER_STALE_MS);
