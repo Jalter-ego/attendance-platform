@@ -1,5 +1,5 @@
 mock_provider "aws" {
-  override_during = plan
+  override_during = apply
 
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
@@ -61,46 +61,46 @@ override_data {
   values          = { id = "ami-33333333333333333" }
 }
 
+override_data {
+  override_during = plan
+  target          = data.aws_instance.frontend_runtime
+  values          = { public_ip = "198.51.100.20" }
+}
+
 override_resource {
   target          = aws_security_group.role["frontend"]
-  override_during = plan
+  override_during = apply
   values          = { id = "sg-00000000000000001" }
 }
 
 override_resource {
   target          = aws_security_group.role["backend"]
-  override_during = plan
+  override_during = apply
   values          = { id = "sg-00000000000000002" }
 }
 
 override_resource {
   target          = aws_security_group.role["db"]
-  override_during = plan
+  override_during = apply
   values          = { id = "sg-00000000000000003" }
 }
 
 override_resource {
-  target          = aws_ebs_volume.db
-  override_during = plan
-  values          = { id = "vol-00000000000000001" }
-}
-
-override_resource {
   target          = aws_instance.db
-  override_during = plan
-  values          = { id = "i-00000000000000001", private_ip = "10.90.2.10" }
+  override_during = apply
+  values          = { private_ip = "10.90.2.10" }
 }
 
 override_resource {
   target          = aws_instance.backend
-  override_during = plan
-  values          = { id = "i-00000000000000002", private_ip = "10.90.2.11" }
+  override_during = apply
+  values          = { private_ip = "10.90.2.11" }
 }
 
 override_resource {
   target          = aws_instance.frontend
-  override_during = plan
-  values          = { id = "i-00000000000000003", private_ip = "10.90.1.10", public_ip = "198.51.100.20" }
+  override_during = apply
+  values          = { private_ip = "10.90.1.10", public_ip = "198.51.100.20" }
 }
 
 variables {
@@ -125,7 +125,8 @@ variables {
 }
 
 run "tenant_isolation_and_storage" {
-  command = plan
+  # La IP publica se lee despues de aplicar los estados de EC2.
+  command = apply
 
   assert {
     condition = (
@@ -171,7 +172,7 @@ run "tenant_isolation_and_storage" {
 
   assert {
     condition = (
-      strcontains(aws_instance.db.user_data, "vol-00000000000000001") &&
+      strcontains(aws_instance.db.user_data, aws_ebs_volume.db.id) &&
       strcontains(aws_instance.backend.user_data, "10.90.2.10") &&
       strcontains(aws_instance.frontend.user_data, "10.90.2.11") &&
       strcontains(aws_instance.backend.user_data, "/tenants/san-marcos/test")
@@ -308,5 +309,73 @@ run "backups_preserve_tenant_and_project_isolation" {
       alltrue([for action in statement.Action : !contains(["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:*", "*"], action)])
     ])
     error_message = "Los permisos del agente SSM deben conservar la separacion de secretos entre tenants."
+  }
+}
+
+# Los apply de este archivo usan AWS simulado y estado en memoria. Los IDs se
+# generan al crear: compararlos entre pasos permite detectar reemplazos.
+run "create_running_by_default" {
+  command = apply
+
+  assert {
+    condition = (
+      !output.suspended && length(aws_ec2_instance_state.app) == 3 &&
+      alltrue([for instance in aws_ec2_instance_state.app : instance.state == "running" && !instance.force]) &&
+      aws_ec2_instance_state.app["db"].instance_id == output.instance_ids.db &&
+      aws_ec2_instance_state.app["backend"].instance_id == output.instance_ids.backend &&
+      aws_ec2_instance_state.app["frontend"].instance_id == output.instance_ids.frontend
+    )
+    error_message = "La creacion predeterminada debe dejar en marcha las tres EC2 del tenant."
+  }
+}
+
+run "suspend_preserves_instances_and_data_volume" {
+  command = apply
+
+  variables {
+    suspended = true
+  }
+
+  override_data {
+    target = data.aws_instance.frontend_runtime
+    values = { public_ip = "" }
+  }
+
+  assert {
+    condition = (
+      output.suspended &&
+      alltrue([for instance in aws_ec2_instance_state.app : instance.state == "stopped" && !instance.force]) &&
+      output.instance_ids == run.create_running_by_default.instance_ids &&
+      output.db_volume_id == run.create_running_by_default.db_volume_id &&
+      alltrue([for url in output.urls : url == null])
+    )
+    error_message = "Suspender debe detener sin forzar, conservar EC2/EBS y dejar las URLs inactivas como null."
+  }
+}
+
+run "resume_refreshes_public_urls" {
+  command = apply
+
+  variables {
+    suspended = false
+  }
+
+  override_data {
+    target = data.aws_instance.frontend_runtime
+    values = { public_ip = "198.51.100.42" }
+  }
+
+  assert {
+    condition = (
+      !output.suspended &&
+      alltrue([for instance in aws_ec2_instance_state.app : instance.state == "running"]) &&
+      output.instance_ids == run.create_running_by_default.instance_ids &&
+      output.db_volume_id == run.create_running_by_default.db_volume_id &&
+      output.urls.frontend == "http://198.51.100.42/" &&
+      output.urls.api == "http://198.51.100.42/core/api/v1" &&
+      output.urls.frontend_health == "http://198.51.100.42/healthz" &&
+      output.urls.backend_health == "http://198.51.100.42/core/api/v1/health"
+    )
+    error_message = "Reanudar debe conservar EC2/EBS y publicar la IP nueva leida despues del arranque."
   }
 }

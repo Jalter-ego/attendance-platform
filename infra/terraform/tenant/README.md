@@ -1,4 +1,4 @@
-# Instalación por tenant — P1, C1/C2
+# Instalación por tenant — P1, C1/C2/C3
 
 Este directorio es el módulo raíz que ejecutarán Terraform/OpenTofu por cada instalación. Crea tres EC2 desde las AMIs de P3, tres SG, perfiles IAM y un EBS cifrado para PostgreSQL. Reutiliza la red base y tiene su propio estado; no crea otra VPC ni otro bucket.
 
@@ -8,7 +8,7 @@ El frontend publica HTTP y reenvía `/core/` a la API privada. La API solo admit
 
 1. Actualizar la [base](../base/README.md) para crear el endpoint privado SSM y volver a exportar `.local/base.outputs.json`.
 2. Integrar el PR probado de P3, que aporta `infra/cloud-init/user-data.yaml.tftpl`, `attendance-boot` y los playbooks horneados. Este módulo consume ese contrato; no instala la aplicación ni sustituye el trabajo de P3/P4.
-3. Tener los IDs concretos de las AMIs `frontend`, `backend`, `db`, disponibles en la misma cuenta/región y con la etiqueta `Role` correcta. El conjunto actual está en [ami-ids.json](../../packer/ami-ids.json): **0.1.2**, región `us-east-2`, cuatro imágenes disponibles verificadas en AWS. Usar las tres entradas del tenant; `monitoring` se reserva para la EC2 compartida. **No usar las AMIs 0.1.0** por el fallo de inventario reportado por P2. Este módulo recibe IDs concretos y no cambia de versión automáticamente; la prueba funcional de la instalación completa todavía está pendiente.
+3. Tener los IDs concretos de las AMIs `frontend`, `backend`, `db`, disponibles en la misma cuenta/región y con la etiqueta `Role` correcta. El conjunto actual está en [ami-ids.json](../../packer/ami-ids.json): **0.2.1**, región `us-east-2`, cuatro imágenes disponibles verificadas en AWS. P3 reportó arranque, login y respaldo/restauración satisfactorios con ese conjunto. Usar las tres entradas del tenant; `monitoring` se reserva para la EC2 compartida. Estas imágenes se construyeron antes del merge de límites/métricas de P4: para desplegar esas funciones hace falta reconstruir la AMI backend desde el nuevo `develop`. Este módulo recibe IDs concretos y no cambia de versión automáticamente.
 4. Crear fuera de Terraform los `SecureString` de este tenant con la clave administrada de SSM. P6 automatizará su creación:
 
 | Parámetro | Valor requerido por el arranque actual de P3 |
@@ -19,7 +19,7 @@ El frontend publica HTTP y reenvía `/core/` a la API privada. La API solo admit
 
 No pases esos valores como variables de Terraform: terminarían en el estado. Backend y DB pueden leer el prefijo de su tenant/entorno; frontend no tiene permiso para leer secretos. En esta versión ambos lectores comparten ese prefijo, como utiliza el script de P3.
 
-El PR #5 añade respaldos (RF-19 opcional). `base.backups_bucket` vacío mantiene la función desactivada; con un bucket habilita IAM de S3/Run Command y la etiqueta del volumen para DLM. **La AMI DB 0.1.2 no trae los scripts de respaldo**: para activarlo, esperar la 0.2.0 de P3 y su prueba de restauración. Si se usa 0.1.2 para probar Attendance, configurar explícitamente `base.backups_bucket=""`, incluso si el output de la base ya incluye el bucket nuevo.
+Los respaldos (RF-19 opcional) están incluidos desde las AMIs **0.2.1** (vigente: 0.2.2) y P3 reportó la prueba de restauración superada. `base.backups_bucket` vacío mantiene la función desactivada; con un bucket habilita IAM de S3/Run Command y la etiqueta del volumen para DLM. No usar la AMI 0.2.0, cuyo arranque de respaldos fallaba por una variable de Ansible; el PR #7 corrige ese problema. Las 0.1.2 no contienen los scripts de respaldo.
 
 `backup` admite `{ schedule="weekly", retention_days=28 }` (predeterminado), `daily/14` o `daily/30`. El worker recibe esos datos del plan de P4. La etiqueta de snapshots combina proyecto y política (`BackupPolicy=attendance-platform:weekly-28d`); los permisos S3 de DB se limitan a `tenants/<id>/<env>/`.
 
@@ -35,7 +35,7 @@ import json
 from pathlib import Path
 
 source = json.loads(Path("docs/examples/tenant.example.json").read_text())
-fields = ("tenant_id", "name", "env", "plan", "engine", "contact_email", "timezone", "sizing", "ami")
+fields = ("tenant_id", "name", "env", "plan", "engine", "contact_email", "timezone", "sizing", "ami", "suspended")
 config = {field: source[field] for field in fields}
 config["base"] = json.loads(Path(".local/base.outputs.json").read_text())
 Path(".local/san-marcos.tfvars.json").write_text(json.dumps(config, indent=2) + "\n")
@@ -83,6 +83,25 @@ El worker debe calcular esa ruta según su checkout. Una ruta relativa proporcio
 
 Si falla una creación, conserva el backend, las variables y los secretos. Ejecuta otro `plan` sobre el mismo estado para completar lo pendiente; no crees otra clave ni borres el lock de una operación activa. Un plan guardado anterior puede quedar obsoleto tras cambios de otro participante.
 
+## Suspender y reanudar
+
+`suspended` vale `false` por defecto. La primera creación debe usar `false` y completar los health checks antes de suspender: Terraform conoce el estado de EC2, pero no sabe cuándo termina cloud-init. No cambiar AMIs, cloud-init ni tamaños durante una suspensión; el worker debe exigir reanudar primero. Ver [la advertencia del proveedor sobre user data](https://github.com/hashicorp/terraform-provider-aws/blob/v6.69.1/website/docs/r/ec2_instance_state.html.markdown).
+
+Para suspender un tenant ya listo, cambiar `"suspended": true` en su `.local/san-marcos.tfvars.json` y ejecutar:
+
+```bash
+terraform -chdir=infra/terraform/tenant plan -lock-timeout=5m -var-file=../../../.local/san-marcos.tfvars.json -out=../../../.local/san-marcos-power.tfplan
+terraform -chdir=infra/terraform/tenant show ../../../.local/san-marcos-power.tfplan
+terraform -chdir=infra/terraform/tenant apply -lock-timeout=5m ../../../.local/san-marcos-power.tfplan
+terraform -chdir=infra/terraform/tenant output -json > .local/san-marcos.outputs.json
+```
+
+Para reanudar, cambiar a `"suspended": false` y repetir esos comandos, generando un plan nuevo. Se administran los tres estados mediante `aws_ec2_instance_state`, sin solicitar una parada forzada. El plan de una suspensión/reanudación no debe reemplazar ni destruir EC2, discos ni attachments. Al incorporar esta función a una instalación anterior, aparecerán tres recursos nuevos de **control de estado**, no tres EC2 adicionales.
+
+Mientras está suspendido, `urls` conserva sus cuatro claves con valores `null`. Al reanudar, la IP pública del frontend puede cambiar; se consulta después de arrancar y las URLs se recalculan. P2/P6 deben guardar esos nuevos outputs y esperar otra vez ambos health checks antes de marcar el tenant como disponible. Los discos EBS se conservan. Ver [el comportamiento de stop/start de AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Stop_Start.html).
+
+Este ciclo está probado con AWS simulado. Falta la prueba real: registrar un dato → suspender → reanudar → comprobar que el dato sigue y que las URLs funcionan.
+
 ## Discos y eliminación
 
 El EBS de datos es un recurso separado: se conserva al reemplazar la EC2 DB y se desacopla deteniendo la instancia, sin forzar. Cambiar la AMI o el cloud-init puede reemplazar EC2 e IPs; no se ha probado aún una actualización con datos reales.
@@ -94,7 +113,7 @@ terraform -chdir=infra/terraform/tenant plan -destroy -lock-timeout=5m -var-file
 terraform -chdir=infra/terraform/tenant show ../../../.local/san-marcos-destroy.tfplan
 ```
 
-Este bloque no implementa todavía suspensión/reanudación, cambios de plan, servidor de monitoreo ni interfaz de la plataforma. OpenTofu usará el mismo código, con `engine="tofu"` y su backend propio por despliegue; la ejecución con ese CLI está pendiente de verificar. No alternes motores sobre una instalación existente sin una migración acordada.
+Siguen pendientes los cambios de plan, el servidor de monitoreo y la interfaz de la plataforma. OpenTofu usará el mismo código, con `engine="tofu"` y su backend propio por despliegue; la ejecución con ese CLI está pendiente de verificar. No alternes motores sobre una instalación existente sin una migración acordada.
 
 ## Verificación sin desplegar
 
@@ -104,4 +123,4 @@ terraform -chdir=infra/terraform/tenant validate
 terraform -chdir=infra/terraform/tenant test
 ```
 
-Siete pruebas con AWS simulado verifican aislamiento de red/IAM, datos de cloud-init y EBS, outputs, permisos/etiquetas de respaldos y rechazo de plantilla ausente, arquitectura incompatible, otra VPC o DNS privado desactivado. La fixture de cloud-init solo verifica el contrato y no arranca Attendance. Todavía falta la prueba real con AMIs, secretos y health checks.
+Diez pruebas con AWS simulado verifican aislamiento de red/IAM, datos de cloud-init y EBS, outputs, permisos/etiquetas de respaldos y rechazo de plantilla ausente, arquitectura incompatible, otra VPC o DNS privado desactivado. Incluyen creación → suspensión → reanudación sobre el mismo estado de prueba, conservación de IDs de EC2/EBS y actualización de las URLs con otra IP pública. La fixture de cloud-init solo verifica el contrato y no arranca Attendance. P3 reportó la prueba real con las AMIs 0.2.1 y la repitió con 0.2.2, que incluye los límites y métricas de P4.
