@@ -23,22 +23,23 @@ function formatDate(value: string | null) {
 }
 
 export function BackupsPage() {
-  const { user } = useAuth();
+  const { user, mode } = useAuth();
+  const local = mode === 'local';
   const isAdmin = user?.role === 'platform_admin';
   const [params, setParams] = useSearchParams();
   const tenantsFetcher = useCallback(
-    (signal: AbortSignal) => tenantsService.list('limit=100', signal),
+    (signal: AbortSignal) => tenantsService.list('limit=100&exclude_deleted=true', signal),
     [],
   );
   const tenants = useResource('backups:tenants', tenantsFetcher);
   const id = params.get('tenant') || tenants.data?.items[0]?.id || '';
-  const tenant = tenants.data?.items.find((item) => item.id === id);
 
   const detailFetcher = useCallback(
     (signal: AbortSignal) => tenantsService.detail(id, signal),
     [id],
   );
   const detail = useResource(`backups:detail:${id}`, detailFetcher, 3000);
+  const tenant = detail.data ?? tenants.data?.items.find((item) => item.id === id);
   const operations = (detail.data?.operations ?? []).filter((operation) =>
     backupTypes.includes(operation.type),
   );
@@ -106,8 +107,7 @@ export function BackupsPage() {
           <span className="eyebrow">CONTINUIDAD</span>
           <h1>Respaldos</h1>
           <p>
-            Volcado de la base en S3 y snapshot del disco de datos, por
-            institución y entorno.
+            {local ? 'Copias simuladas por institución y entorno.' : 'Volcado de la base en S3 y snapshot del disco de datos, por institución y entorno.'}
           </p>
         </div>
         <select
@@ -145,10 +145,10 @@ export function BackupsPage() {
               <dt>Estado</dt>
               <dd>{tenant && <StatusBadge status={tenant.status} />}</dd>
             </div>
-            <div>
+            {!local && <div>
               <dt>Bucket</dt>
               <dd className="backup-mono">{backups.data?.bucket ?? '—'}</dd>
-            </div>
+            </div>}
             <div>
               <dt>Respaldos</dt>
               <dd>{backups.data?.items.length ?? '—'}</dd>
@@ -166,24 +166,22 @@ export function BackupsPage() {
           </span>
           <h2>Respaldar ahora</h2>
           <p>
-            Crea un volcado lógico de la base (pg_dump) en S3 y un snapshot EBS
-            del disco de datos. La aplicación sigue disponible.
+            {local ? 'Crea una copia simulada y registra el progreso en el worker.' : 'Crea un volcado lógico de la base (pg_dump) en S3 y un snapshot EBS del disco de datos. La aplicación sigue disponible.'}
           </p>
-          <span className="helper-text">
+          {!local && <span className="helper-text">
             Necesita la VM db encendida. Los programados corren solos según el
             plan.
-          </span>
+          </span>}
           {tenant && tenant.status !== 'ready' && (
             <p role="status" className="backup-warning">
               Estado en la plataforma: <StatusBadge status={tenant.status} />.
-              Si su infraestructura no está desplegada o está suspendida, el
-              respaldo fallará.
+              Activa el tenant para crear o restaurar un respaldo.
             </p>
           )}
           {isAdmin && (
             <button
               className="button primary"
-              disabled={pending || busy}
+              disabled={pending || busy || tenant?.status !== 'ready'}
               onClick={() => {
                 void start(() => backupsService.backup(id));
               }}
@@ -213,7 +211,7 @@ export function BackupsPage() {
       </div>
       <section className="panel">
         {backups.loading ? (
-          <div className="empty-state compact">Consultando S3 y EBS…</div>
+          <div className="empty-state compact">{local ? 'Cargando respaldos…' : 'Consultando S3 y EBS…'}</div>
         ) : backups.error ? (
           <div role="alert" className="alert error">
             {backups.error}
@@ -231,8 +229,7 @@ export function BackupsPage() {
                 <tr>
                   <th>Fecha</th>
                   <th>Tipo</th>
-                  <th>Volcado (S3)</th>
-                  <th>Snapshot (EBS)</th>
+                  {!local && <><th>Volcado (S3)</th><th>Snapshot (EBS)</th></>}
                   <th>
                     <span className="sr-only">Acciones</span>
                   </th>
@@ -246,11 +243,11 @@ export function BackupsPage() {
                       <small className="backup-id">{item.backup_id}</small>
                     </td>
                     <td>
-                      {item.dump
+                      {local ? 'Simulado' : item.dump
                         ? (backupTypeNames[item.type] ?? item.type)
                         : 'Solo snapshot (DLM)'}
                     </td>
-                    <td className="muted">
+                    {!local && <><td className="muted">
                       {item.dump ? formatBytes(item.dump.bytes) : '—'}
                     </td>
                     <td className="muted">
@@ -264,12 +261,12 @@ export function BackupsPage() {
                       ) : (
                         '—'
                       )}
-                    </td>
+                    </td></>}
                     <td>
                       {isAdmin && item.restorable && (
                         <button
                           className="button small"
-                          disabled={pending || busy}
+                          disabled={pending || busy || tenant?.status !== 'ready'}
                           onClick={() => {
                             setTyped('');
                             setConfirm(item);

@@ -87,6 +87,6 @@ pnpm test
 
 Las pruebas de `pnpm test` usan procesos ficticios, una conexión simulada para el worker y un cliente SSM simulado. No cargan `.env`, no consultan AWS ni modifican PostgreSQL. `pnpm test:runner` limita la ejecución a procesos y filtrado; `pnpm test:backups` conserva las pruebas de P3.
 
-La unión P2/P6 conserva las dos migraciones 003 y añade `004_unify_deployments.sql`. Hay una suite separada `pnpm test:integration`, con PostgreSQL local desechable y AWS simulado. Ver el contrato anterior antes de ejecutarla.
+El migrador conserva los checksums de las versiones publicadas y reconcilia sus cambios de despliegues y operaciones. La suite `pnpm test:integration` usa PostgreSQL local desechable y AWS simulado. `pnpm test:e2e:local` prueba la API y el worker en modo local.
 
 Referencias: [procesos y grupos de Node.js](https://nodejs.org/api/child_process.html#optionsdetached), [credenciales del SDK de AWS](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html), [PutParameter](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html), [DescribeParameters](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DescribeParameters.html).

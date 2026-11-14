@@ -2,13 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { transaction } from '../../db/pool.js';
 import { LeaseLost } from '../../worker/errors.js';
 
-export const infrastructureStates = {
-  create: { running: 'provisioning', done: 'ready' },
-  suspend: { running: 'suspending', done: 'suspended' },
-  resume: { running: 'resuming', done: 'ready' },
-  destroy: { running: 'deleting', done: 'deleted' },
-};
-
 export async function saveDeployment(pool, operation, workerId, deployment) {
   return transaction(pool, async (client) => {
     const owner = await client.query(
@@ -29,13 +22,16 @@ export async function saveDeployment(pool, operation, workerId, deployment) {
 }
 
 export async function finishCreation(client, operation, status) {
-  const transition = infrastructureStates[operation.type];
-  if (!transition) return;
-  const deploymentStatus = status === 'succeeded' ? transition.done : 'failed';
+  const deploymentStatus = status === 'succeeded' ? 'ready' : 'failed';
   await client.query('UPDATE deployments SET status = $2 WHERE operation_id = $1', [operation.id, deploymentStatus]);
-  if (operation.type === 'destroy' && status === 'succeeded')
-    await client.query(`UPDATE deployments SET status='deleted',
-      outputs=jsonb_set(outputs,'{urls}','{"frontend":null,"api":null,"frontend_health":null,"backend_health":null}'::jsonb)
-      WHERE tenant_id=$1`, [operation.tenant_id]);
   await client.query('UPDATE tenants SET status = $2, updated_at = now() WHERE id = $1', [operation.tenant_id, deploymentStatus]);
+}
+
+// PR26 podía dejar estados provisionales al encolar antes de un reinicio del worker.
+export async function recoverLegacyTransition(client, operation) {
+  const releases = { suspend: ['suspending', 'ready'], resume: ['resuming', 'suspended'], destroy: ['deleting', 'failed'] };
+  const state = releases[operation.type];
+  if (!state) return;
+  await client.query('UPDATE tenants SET status=$3, updated_at=now() WHERE id=$1 AND status=$2',
+    [operation.tenant_id, ...state]);
 }

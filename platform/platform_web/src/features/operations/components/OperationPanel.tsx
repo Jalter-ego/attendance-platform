@@ -142,7 +142,7 @@ export function OperationPanel({
                     : 'Cancelar operación'}
                 </button>
               )}
-              {['failed', 'cancelled'].includes(operation.status) && (
+              {['failed', 'cancelled'].includes(operation.status) && !operation.type.startsWith('preview-') && (
                 <button
                   className="button small"
                   disabled={pending}

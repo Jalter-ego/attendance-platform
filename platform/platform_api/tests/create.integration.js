@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdtemp, writeFile, rm, readFile, access } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile, access, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,7 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
   const amiFile = join(directory, 'amis.json');
   await writeFile(baseFile, JSON.stringify(base));
   await writeFile(amiFile, JSON.stringify({ region: base.region, image_version: '0.2.2', ami }));
-  const config = readConfig({ DATABASE_URL: connection, NODE_ENV: 'test',
+  const config = readConfig({ DATABASE_URL: connection, NODE_ENV: 'test', PLATFORM_DEPLOY_MODE: 'integration',
     DEPLOYMENT_BASE_OUTPUTS_FILE: baseFile, DEPLOYMENT_AMI_FILE: amiFile,
     DEPLOYMENT_STATE_BUCKET: 'attendance-state-test', DEPLOYMENT_WORK_DIR: join(directory, 'work'),
     HEALTH_SCRIPT: fileURLToPath(new URL('./fixtures/fake-health.sh', import.meta.url)), HEALTH_TIMEOUT_S: '1',
@@ -40,6 +40,7 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
   const pool = createPool(config);
   t.after(async () => { await pool.end(); await rm(directory, { recursive: true, force: true }); });
   // Comprobar las dos migraciones 003 ya publicadas sin cambiar sus checksums.
+  const migrationCount = (await readdir(new URL('../migrations/', import.meta.url))).filter((file) => file.endsWith('.sql')).length;
   for (const legacy of ['003_create_deployments.sql', '003_engines.sql', null]) {
     await t.test(`migraciones desde ${legacy ?? 'una base nueva'} conservan datos y checksums`, async () => {
       await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
@@ -59,7 +60,7 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
           [operationId, tenantId, legacy === '003_engines.sql' ? 'suspend' : 'create', userId]);
         await pool.query("INSERT INTO deployments(id,tenant_id,operation_id,engine,resources) VALUES ($1,$2,$3,'terraform','[{\"id\":\"i-existing\"}]')", [savedId, tenantId, operationId]);
       }
-      assert.equal(await migrate(pool), legacy ? 3 : 6);
+      assert.equal(await migrate(pool), migrationCount - (legacy ? 3 : 0));
       assert.equal(await migrate(pool), 0, 'repetir no modifica nada');
       if (savedId) {
         const saved = (await pool.query('SELECT * FROM deployments WHERE id=$1', [savedId])).rows[0];
@@ -123,7 +124,7 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
   });
   await t.test('configuración inválida se revierte sin encolar ni cambiar el tenant', async () => {
     const record = await tenant('sin-config');
-    const incomplete = createApp({ pool, config: { ...config, DEPLOYMENT_STATE_BUCKET: '' }, adapters });
+    const incomplete = createApp({ pool, config: { ...config, DEPLOYMENT_STATE_BUCKET: '', IAC_STATE_BUCKET: '' }, adapters });
     await enqueue(record.id, incomplete).expect(503);
     assert.equal((await state(record.id)).status, 'draft');
   });
@@ -148,7 +149,7 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
     assert.equal(context.backend.key, 'tenants/completo/test/terraform.tfstate');
     assert.equal(context.backend.use_lockfile, true);
     const variables = JSON.parse(await readFile(context.variableFile, 'utf8'));
-    assert.ok(variables.cloud_init_template_path.endsWith('infra/cloud-init/user-data.yaml.tftpl'));
+    assert.ok(variables.cloud_init_template_path.replaceAll('\\', '/').endsWith('infra/cloud-init/user-data.yaml.tftpl'));
     await access(context.cloudInitTemplatePath);
     await access(join(context.moduleDirectory, 'versions.tf'));
     const saved = (await pool.query('SELECT * FROM deployments WHERE operation_id=$1', [queued.id])).rows[0];
@@ -192,7 +193,8 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
     const queued = (await enqueue(record.id).expect(202)).body;
     await api().post(`/api/v1/operations/${queued.id}/cancel`).set('Cookie', cookie).send({}).expect(200);
     assert.equal((await state(record.id)).status, 'failed');
-    const retry = (await enqueue(record.id).expect(202)).body;
+    await enqueue(record.id).expect(409);
+    const retry = (await api().post(`/api/v1/operations/${queued.id}/retry`).set('Cookie', cookie).send({}).expect(202)).body;
     assert.deepEqual(retry.params.deployment, queued.params.deployment);
     await run();
   });
@@ -299,10 +301,11 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
     assert.equal(response.body.items.find((engine) => engine.code === 'pulumi').available, false);
   });
 
-  await t.test('P2 y P6: create, suspend, resume y destroy con CLI simulado y la misma configuración', async () => {
+  await t.test('P2 y P6: crear, suspender, reanudar y eliminar con CLI simulado y la misma configuración', async () => {
     const realConfig = { ...config, TERRAFORM_BIN: fileURLToPath(new URL('./fixtures/fake-terraform.mjs', import.meta.url)),
       TOFU_BIN: fileURLToPath(new URL('./fixtures/fake-terraform.mjs', import.meta.url)), PYTHON_BIN: 'python-inexistente-prueba',
       IAC_RUNS_DIR: join(directory, 'p2-runs'), DEPLOYMENT_WORK_DIR: join(directory, 'p2-runs'),
+      PLATFORM_WORK_ROOT: join(directory, 'lifecycle-runs'),
     };
     const realApp = createApp({ pool, config: realConfig });
     const log = join(directory, 'p2-calls.jsonl');
@@ -327,7 +330,7 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
       assert.equal(deployed.tool_versions.provider_aws, '6.20.0');
       assert.equal(deployed.outputs.urls.frontend, 'http://198.51.100.44/');
       assert.ok(!JSON.stringify(deployed).includes('no-debe-aparecer'));
-      const workDir = join(realConfig.DEPLOYMENT_WORK_DIR, record.tenant_id, record.env, record.engine);
+      const workDir = join(realConfig.PLATFORM_WORK_ROOT, record.tenant_id, record.env, record.engine);
       const firstVars = JSON.parse(await readFile(join(workDir, 'tenant.tfvars.json'), 'utf8'));
       assert.deepEqual(firstVars.backup, { schedule: 'weekly', retention_days: 28 });
       const firstBackend = await readFile(join(workDir, 'backend.hcl'), 'utf8');
@@ -337,10 +340,13 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
       const send = (body) => request(realApp).post(`/api/v1/tenants/${record.id}/operations`).set('Cookie', cookie).send(body);
       const suspended = (await send({ type: 'suspend' }).expect(202)).body;
       await runOnce(pool, { config: realConfig, creationServices: services });
-      assert.equal((await operation(suspended.id)).status, 'succeeded');
+      const suspensionOperation = await operation(suspended.id);
+      assert.equal(suspensionOperation.status, 'succeeded', suspensionOperation.error_message);
       assert.equal((await state(record.id)).status, 'suspended');
-      assert.equal((await readFile(join(workDir, 'backend.hcl'), 'utf8')), firstBackend);
-      const suspensionVars = JSON.parse(await readFile(join(workDir, 'tenant.tfvars.json'), 'utf8'));
+      const running = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      const backendFields = (text) => Object.fromEntries(text.trim().split('\n').map((line) => line.split('=').map((part) => part.trim())));
+      assert.deepEqual(backendFields(running.filter((call) => call.command === 'init').at(-1).backend), backendFields(firstBackend));
+      const suspensionVars = running.filter((call) => call.command === 'plan').at(-1).variables;
       assert.equal(suspensionVars.suspended, true);
       assert.deepEqual(suspensionVars.limits, firstVars.limits);
       const suspension = (await pool.query('SELECT * FROM deployments WHERE operation_id=$1', [suspended.id])).rows[0];
@@ -355,7 +361,11 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
       assert.equal(resumption.outputs.urls.frontend, 'http://198.51.100.55/');
       assert.equal(resumption.health.status, 'healthy');
       await send({ type: 'destroy', confirm: 'otro' }).expect(400);
-      const destroyed = (await send({ type: 'destroy', confirm: record.tenant_id }).expect(202)).body;
+      await send({ type: 'destroy', confirm: record.tenant_id }).expect(409);
+      const preview = (await send({ type: 'preview-delete' }).expect(202)).body;
+      await runOnce(pool, { config: realConfig, creationServices: services });
+      assert.equal((await operation(preview.id)).status, 'succeeded');
+      const destroyed = (await send({ type: 'delete', confirm: true, preview_id: preview.id }).expect(202)).body;
       await runOnce(pool, { config: realConfig, creationServices: services });
       assert.equal((await operation(destroyed.id)).status, 'succeeded');
       assert.equal((await state(record.id)).status, 'deleted');
@@ -408,7 +418,11 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
     assert.equal((await operation(resumed.id)).status, 'succeeded');
     const detail = (await request(nativeApp).get(`/api/v1/tenants/${record.id}`).set('Cookie', cookie).expect(200)).body;
     assert.equal(detail.deployments[0].outputs.urls.frontend, 'http://198.51.100.41/');
-    const destroyed = (await send({ type: 'destroy', confirm: record.tenant_id }).expect(202)).body;
+    await send({ type: 'destroy', confirm: record.tenant_id }).expect(409);
+    const preview = (await send({ type: 'preview-delete' }).expect(202)).body;
+    await runNative();
+    assert.equal((await operation(preview.id)).status, 'succeeded');
+    const destroyed = (await send({ type: 'delete', confirm: true, preview_id: preview.id }).expect(202)).body;
     await runNative();
     assert.equal((await operation(destroyed.id)).status, 'succeeded');
     assert.equal((await state(record.id)).status, 'deleted');

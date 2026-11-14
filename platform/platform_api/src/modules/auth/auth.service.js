@@ -13,16 +13,17 @@ export const publicUser = (user) => ({
   role: user.role,
   tenant_id: user.tenant_id,
 });
+export const userName = z.string().trim().min(1).max(150);
+export const userEmail = z.string().trim().max(255).pipe(z.email())
+  .transform((value) => value.toLowerCase());
+export const newPassword = z.string().min(12).max(128);
 
 export async function bootstrapAdmin(pool, input) {
   const admin = z
     .object({
-      name: z.string().trim().min(1).max(150),
-      email: z
-        .email()
-        .max(255)
-        .transform((value) => value.toLowerCase()),
-      password: z.string().min(12).max(128),
+      name: userName,
+      email: userEmail,
+      password: newPassword,
     })
     .parse(input);
   const passwordHash = await hashPassword(admin.password);
@@ -45,10 +46,7 @@ export async function bootstrapAdmin(pool, input) {
 export async function login(pool, config, input) {
   const credentials = z
     .object({
-      email: z
-        .email()
-        .max(255)
-        .transform((value) => value.toLowerCase()),
+      email: userEmail,
       password: z.string().min(1).max(128),
     })
     .parse(input);
@@ -57,19 +55,23 @@ export async function login(pool, config, input) {
     [credentials.email],
   );
   const user = result.rows[0];
-  if (!(await verifyPassword(credentials.password, user?.password_hash)))
-    throw new HttpError(
-      401,
-      'INVALID_CREDENTIALS',
-      'Correo o contraseña incorrectos.',
-    );
+  const invalidCredentials = () =>
+    new HttpError(401, 'INVALID_CREDENTIALS', 'Correo o contraseña incorrectos.');
+  if (!(await verifyPassword(credentials.password, user?.password_hash))) throw invalidCredentials();
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + config.SESSION_HOURS * 3600000);
   await pool.query('DELETE FROM sessions WHERE expires_at < now()');
-  await pool.query(
-    'INSERT INTO sessions(token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
-    [tokenHash(token), user.id, expiresAt],
-  );
+  await transaction(pool, async (client) => {
+    const current = await client.query(
+      'SELECT id FROM users WHERE id=$1 AND active AND password_hash=$2 FOR SHARE',
+      [user.id, user.password_hash],
+    );
+    if (!current.rowCount) throw invalidCredentials();
+    await client.query(
+      'INSERT INTO sessions(token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
+      [tokenHash(token), user.id, expiresAt],
+    );
+  });
   return { user: publicUser(user), token, expiresAt };
 }
 

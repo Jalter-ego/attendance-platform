@@ -5,7 +5,7 @@ import { readConfig } from '../src/config.js';
 import { runOnce } from '../src/worker/queue.js';
 
 const config = {
-  ...readConfig({ DATABASE_URL: 'postgresql://unused' }),
+  ...readConfig({ DATABASE_URL: 'postgresql://unused', PLATFORM_DEPLOY_MODE: 'integration' }),
   BACKUP_SCRIPT: fileURLToPath(new URL('./fixtures/fake-backup.sh', import.meta.url)),
 };
 

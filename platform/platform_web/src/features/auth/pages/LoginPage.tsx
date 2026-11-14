@@ -1,41 +1,38 @@
 import { useState } from 'react';
-import type { FormEvent } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Icon } from '../../../components/Icon';
 
 export function LoginPage() {
   const { user, loading, login } = useAuth();
   const [error, setError] = useState('');
-  const [pending, setPending] = useState(false);
+  const { register, handleSubmit, formState: { isSubmitting: pending, errors } } = useForm<{ email: string; password: string }>({
+    defaultValues: { email: '', password: '' },
+  });
   if (loading) return <div className="screen-state">Cargando plataforma…</div>;
   if (user) return <Navigate to="/tenants" replace />;
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const values = new FormData(event.currentTarget);
+  async function submit({ email, password }: { email: string; password: string }) {
     setError('');
-    setPending(true);
     try {
-      await login(String(values.get('email')), String(values.get('password')));
+      await login(email.trim(), password);
     } catch (error) {
       setError(
         error instanceof Error ? error.message : 'No se pudo iniciar sesión.',
       );
-    } finally {
-      setPending(false);
     }
   }
   return (
     <div className="login-page">
       <section className="login-story">
-        <div className="brand">
+        <Link className="brand" to="/">
           <span className="brand-mark">
             <Icon name="grid" />
           </span>
           <span>
             attendance<small>CONTROL CENTER</small>
           </span>
-        </div>
+        </Link>
         <div className="login-message">
           <span className="eyebrow">
             UN SOLO LUGAR. TODAS TUS INSTITUCIONES.
@@ -67,7 +64,8 @@ export function LoginPage() {
         </small>
       </section>
       <section className="login-form-area">
-        <form className="login-form" onSubmit={submit}>
+        <form className="login-form" onSubmit={handleSubmit(submit)} noValidate>
+          <Link className="back-link" to="/"><Icon name="back" size={16} />Volver al inicio</Link>
           <span className="eyebrow">BIENVENIDO DE NUEVO</span>
           <h2>Inicia sesión</h2>
           <p>Ingresa con tu cuenta de la plataforma.</p>
@@ -79,24 +77,30 @@ export function LoginPage() {
           <label>
             Correo electrónico
             <input
-              name="email"
+              {...register('email', { required: 'Ingresa tu correo.', pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Ingresa un correo válido.' } })}
               type="email"
               autoComplete="username"
               placeholder="nombre@institucion.edu"
               required
               maxLength={255}
+              aria-invalid={Boolean(errors.email)}
+              aria-describedby={errors.email ? 'login-email-error' : undefined}
             />
+            {errors.email && <small id="login-email-error" role="alert">{errors.email.message}</small>}
           </label>
           <label>
             Contraseña
             <input
-              name="password"
+              {...register('password', { required: 'Ingresa tu contraseña.' })}
               type="password"
               autoComplete="current-password"
               placeholder="Tu contraseña"
               required
               maxLength={128}
+              aria-invalid={Boolean(errors.password)}
+              aria-describedby={errors.password ? 'login-password-error' : undefined}
             />
+            {errors.password && <small id="login-password-error" role="alert">{errors.password.message}</small>}
           </label>
           <button className="button primary full-width" disabled={pending}>
             {pending ? 'Ingresando…' : 'Ingresar a la plataforma'}

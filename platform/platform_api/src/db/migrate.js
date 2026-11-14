@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { transaction } from './pool.js';
-import { applyConcurrentMigration } from './migration-compatibility.js';
+import { applyMigration } from './migration-compatibility.js';
 
 export async function migrate(pool) {
   const directory = new URL('../../migrations/', import.meta.url);
@@ -30,7 +30,7 @@ export async function migrate(pool) {
           );
         continue;
       }
-      if (!(await applyConcurrentMigration(client, file))) await client.query(sql);
+      await applyMigration(client, file, sql);
       await client.query(
         'INSERT INTO schema_migrations(filename, checksum) VALUES ($1, $2)',
         [file, checksum],

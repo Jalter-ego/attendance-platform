@@ -1,5 +1,5 @@
 import { readConfig } from './config.js';
-import { createPool } from './db/pool.js';
+import { assertDeploymentMode, createPool } from './db/pool.js';
 import { createApp } from './app.js';
 import { databaseErrorMessage } from './db/diagnostics.js';
 
@@ -8,6 +8,7 @@ try {
   const config = readConfig();
   pool = createPool(config);
   await pool.query('SELECT filename FROM schema_migrations LIMIT 1');
+  await assertDeploymentMode(pool, config);
   const server = createApp({ pool, config }).listen(
     config.PORT,
     config.HOST,

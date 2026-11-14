@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { transaction } from '../../db/pool.js';
 import { HttpError } from '../../lib/errors.js';
+import { recordAudit } from '../audit/audit.service.js';
 
 export const PLAN_CODE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 export const planCode = z
@@ -96,9 +97,11 @@ const usageSql = `
     ) AS tenants
   FROM plans p LEFT JOIN tenants t ON t.plan = p.code`;
 
-export async function listPlans(pool) {
+export async function listPlans(pool, user) {
   const result = await pool.query(
-    `${usageSql} GROUP BY p.code ORDER BY (p.sizing->>'db_disk_gb')::int, p.code`,
+    `${usageSql} AND ($1::uuid IS NULL OR t.id = $1)
+      GROUP BY p.code ORDER BY (p.sizing->>'db_disk_gb')::int, p.code`,
+    [user.role === 'tenant_admin' ? user.tenant_id : null],
   );
   return { items: result.rows };
 }
@@ -117,12 +120,15 @@ export async function getPlan(pool, code) {
 
 export async function createPlan(pool, user, input) {
   const plan = createPlanInput.parse(input);
-  await pool.query(
-    `INSERT INTO plans(code, name, description, sizing, limits, backup, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [plan.code, plan.name, plan.description, plan.sizing, plan.limits, plan.backup, user.id],
-  );
-  return getPlan(pool, plan.code);
+  return transaction(pool, async (client) => {
+    await client.query(
+      `INSERT INTO plans(code, name, description, sizing, limits, backup, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [plan.code, plan.name, plan.description, plan.sizing, plan.limits, plan.backup, user.id],
+    );
+    await recordAudit(client, user, { action: 'plan-create', details: plan.code });
+    return getPlan(client, plan.code);
+  });
 }
 
 const same = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
@@ -140,7 +146,7 @@ function sortKeys(value) {
 export async function updatePlan(pool, user, code, input) {
   planCode.parse(code);
   const next = updatePlanInput.parse(input);
-  const { plan, changed } = await transaction(pool, async (client) => {
+  return transaction(pool, async (client) => {
     const current = await client.query('SELECT * FROM plans WHERE code = $1 FOR UPDATE', [code]);
     if (!current.rowCount) throw new HttpError(404, 'NOT_FOUND', 'No se encontró el plan.');
     const row = current.rows[0];
@@ -151,42 +157,51 @@ export async function updatePlan(pool, user, code, input) {
         `Otra persona guardó el plan mientras lo editabas (versión ${row.version}). Recarga y vuelve a aplicar tus cambios.`,
       );
     const fields = ['name', 'description', 'sizing', 'limits', 'backup'];
-    if (fields.every((field) => same(row[field], next[field])))
-      return { plan: row, changed: false };
-    const updated = await client.query(
-      `UPDATE plans SET name = $2, description = $3, sizing = $4, limits = $5, backup = $6,
-         version = version + 1, updated_at = now(), updated_by = $7
-       WHERE code = $1 RETURNING *`,
-      [code, next.name, next.description, next.sizing, next.limits, next.backup, user.id],
-    );
-    return { plan: updated.rows[0], changed: true };
+    const changed = fields.some((field) => !same(row[field], next[field]));
+    if (changed) {
+      await client.query(
+        `UPDATE plans SET name = $2, description = $3, sizing = $4, limits = $5, backup = $6,
+           version = version + 1, updated_at = now(), updated_by = $7
+         WHERE code = $1`,
+        [code, next.name, next.description, next.sizing, next.limits, next.backup, user.id],
+      );
+      await recordAudit(client, user, { action: 'plan-update', details: code });
+    }
+    const plan = await getPlan(client, code);
+    const unchanged = plan.tenant_list.filter((tenant) => tenant.plan_version < plan.version);
+    return {
+      plan,
+      changed,
+      unchanged_tenants: unchanged.length,
+      warning:
+        changed && unchanged.length
+          ? `Plan ${plan.name} guardado (v${plan.version}). ${unchanged.length} institución(es) siguen con la versión anterior: sus límites, servidores y respaldo no se modificaron. La versión nueva aplica a las instituciones que se creen desde ahora; para una existente hace falta un cambio de plan (puede recrear sus servidores).`
+          : null,
+    };
   });
-  const detail = await getPlan(pool, code);
-  const unchanged = detail.tenant_list.filter((tenant) => tenant.plan_version < plan.version);
-  return {
-    plan: detail,
-    changed,
-    unchanged_tenants: unchanged.length,
-    warning:
-      changed && unchanged.length
-        ? `Plan ${plan.name} guardado (v${plan.version}). ${unchanged.length} institución(es) siguen con la versión anterior: sus límites, servidores y respaldo no se modificaron. La versión nueva aplica a las instituciones que se creen desde ahora; para una existente hace falta un cambio de plan (puede recrear sus servidores).`
-        : null,
-  };
 }
 
 /** Solo se elimina un plan que ningún tenant usa (ni siquiera uno eliminado: historial). */
-export async function deletePlan(pool, code) {
+export async function deletePlan(pool, code, user) {
   planCode.parse(code);
   return transaction(pool, async (client) => {
     const current = await client.query('SELECT code FROM plans WHERE code = $1 FOR UPDATE', [code]);
     if (!current.rowCount) throw new HttpError(404, 'NOT_FOUND', 'No se encontró el plan.');
-    const used = await client.query('SELECT count(*)::int AS n FROM tenants WHERE plan = $1', [code]);
-    if (used.rows[0].n)
+    const { rows: [usage] } = await client.query(
+      `SELECT (SELECT count(*)::int FROM tenants WHERE plan = $1) AS tenants,
+        EXISTS (SELECT 1 FROM operations
+          WHERE type='plan-change' AND status IN ('queued','running') AND params->>'plan'=$1) AS pending`,
+      [code],
+    );
+    if (usage.tenants)
       throw new HttpError(
         409,
         'PLAN_IN_USE',
-        `No se puede eliminar: ${used.rows[0].n} tenant(s) lo usan o lo usaron. Puedes editarlo en su lugar.`,
+        `No se puede eliminar: ${usage.tenants} tenant(s) lo usan o lo usaron. Puedes editarlo en su lugar.`,
       );
+    if (usage.pending)
+      throw new HttpError(409, 'PLAN_IN_USE', 'No se puede eliminar mientras haya un cambio a este plan en curso.');
     await client.query('DELETE FROM plans WHERE code = $1', [code]);
+    await recordAudit(client, user, { action: 'plan-delete', details: code });
   });
 }

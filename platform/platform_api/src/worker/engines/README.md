@@ -1,6 +1,6 @@
 # Conectar el adaptador de P2 al flujo create
 
-P6 usa los adaptadores reales de P2 en `src/engines/adapter.js`. `createEngineAdapters(config)` los construye con la configuración compartida por API y worker. Terraform, OpenTofu y CloudFormation están conectados; Pulumi permanece deshabilitado. No se registra un simulador en producción.
+P6 usa los adaptadores reales de P2 en `src/engines/adapter.js`. `createEngineAdapters(config)` los construye con la configuración compartida por API y worker. En integración se puede aprovisionar con Terraform, OpenTofu y CloudFormation. En modo local el worker simula las operaciones en PostgreSQL.
 
 ## Contrato
 
@@ -27,11 +27,11 @@ El adaptador debe respetar `signal` y esperar los procesos. En un apply de Terra
 
 ## Orden y persistencia
 
-1. La API admite `{type:'create'}` solo a un administrador de plataforma. Sin adaptador responde `503 ENGINE_NOT_AVAILABLE`, sin cambiar el tenant ni escribir en AWS.
-2. Dentro de una transacción bloquea la fila del tenant, exige estado `draft`/`failed` y rechaza otra operación activa. Congela configuración de base, plan, límites, AMIs y backend en `operations.params.deployment`.
-3. También una nueva solicitud tras un fallo reutiliza el primer snapshot. Cambiar el catálogo, el plan o las variables locales no cambia silenciosamente un despliegue parcial. Modificar esa configuración requiere un flujo explícito posterior.
+1. La API admite `{type:'create'}` solo a un administrador de plataforma. `POST /tenants/provision` registra y encola en la misma transacción. En integración la API valida el motor y la configuración antes de encolar.
+2. Dentro de una transacción bloquea la fila del tenant, exige estado `draft` para crear y rechaza otra operación activa. En integración congela configuración de base, plan, límites, AMIs y backend en `operations.params.deployment`.
+3. Tras un fallo se usa `Reintentar` sobre la operación anterior. Cambiar el catálogo, el plan o las variables locales no cambia silenciosamente un despliegue parcial. Modificar esa configuración requiere un flujo explícito posterior.
 4. El worker ejecuta preflight → SSM → apply → outputs/versiones. Guarda un registro `deployments` en `provisioning` antes del health check.
-5. En create y resume ejecuta el script de P4 `infra/health/tenant-health.sh` con la URL del frontend. No usa `--boot`: comprueba frontend/API/BD y guarda solo códigos, tiempos y resultado, sin body ni secretos.
+5. El primer create verifica frontend/API/BD con el script de P4 `infra/health/tenant-health.sh` y guarda códigos, tiempos y resultado. El ciclo posterior de Terraform/OpenTofu puede solicitar `--boot` para extraer las versiones verificadas, además de validar la salud. Solo guarda los campos permitidos.
 6. Solo después de salud positiva y de confirmar que sigue siendo dueño de la operación, finaliza atómicamente operación, deployment y tenant como disponibles. Fallo/cancelación deja tenant/deployment en `failed` y conserva los recursos registrados.
 
 CloudFormation conserva `stack_name`, `stack_id`, versión del SDK y hash de plantilla mediante una lista de campos permitidos. Se valida que el ARN corresponda a la región y al nombre congelado del tenant. Sus esperas y peticiones respetan `IAC_TIMEOUT_S` y la cancelación; completar requiere un evento raíz del token de la operación actual. Ver [la implementación de P2](../../../../../infra/cloudformation/README.md).
@@ -56,9 +56,9 @@ pnpm install
 pnpm db:migrate
 ```
 
-Se conservan `003_create_deployments.sql` y `003_engines.sql`, y se añade `004_unify_deployments.sql`. El migrador resuelve su columna coincidente tanto desde la 003 de P2 como la de P6, conservando checksums/datos. No modificar las migraciones ya aplicadas ni borrar tablas. Reiniciar API y worker. No hace falta ejecutar Terraform para instalar estos cambios de P6.
+El migrador conserva las 003 de P2/P6 y converge sus columnas y tipos de operación. Antes de reiniciar el API y el worker, aplica las migraciones con `pnpm db:migrate`. No hace falta ejecutar Terraform para instalar estos cambios de P6.
 
-En la web: registrar institución → detalle → **Crear instalación en AWS** → progreso → accesos. Para motores todavía no conectados, el botón queda deshabilitado con un mensaje y el diagnóstico sigue funcionando. No se introdujo un despliegue simulado en el frontend.
+En la web se puede crear desde el asistente o aprovisionar un borrador desde su detalle. `PLATFORM_DEPLOY_MODE` indica si se usa el simulador local o la infraestructura real. La eliminación de recursos requiere una vista previa y confirmación. CloudFormation admite crear, suspender, reanudar y eliminar en integración.
 
 ## Verificación
 
@@ -67,4 +67,4 @@ pnpm test
 TEST_DATABASE_URL=postgresql://attendance:attendance_local@127.0.0.1:5433/platform_test_create pnpm test:integration
 ```
 
-La segunda orden requiere crear antes esa base **local y desechable**. La suite exige host localhost/127.0.0.1 y nombre `platform_test*`; elimina y reconstruye su esquema público. No carga `.env`. Prueba las cinco migraciones, ambos caminos de actualización, API/permisos, concurrencia, cancelación, salud fallida/inválida, reintentos congelados y pérdida de propiedad con PostgreSQL real. Incluye los adaptadores reales de P2 con un CLI ficticio o clientes CloudFormation/EC2 simulados y el ciclo create/suspend/resume/destroy. SSM/health se sustituyen por dobles de prueba; no valida un despliegue real en AWS.
+La segunda orden requiere crear antes esa base **local y desechable**. La suite exige host localhost/127.0.0.1 y nombre `platform_test*` porque elimina y reconstruye su esquema público. Prueba migraciones, permisos, concurrencia, cancelación, reintentos, fallos de salud y pérdida de propiedad con PostgreSQL real. El ciclo create/suspend/resume/delete usa CLI, SSM, CloudFormation, EC2 y salud simulados.
