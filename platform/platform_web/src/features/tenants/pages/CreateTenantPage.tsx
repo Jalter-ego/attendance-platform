@@ -47,7 +47,7 @@ const PLAN_COPY: Record<string, string> = {
 const ENGINE_COPY: Record<Tenant['engine'], string> = {
   terraform: 'Motor principal. Estado en S3 con bloqueo por tenant.',
   tofu: 'El mismo módulo de Terraform con el CLI de código abierto.',
-  pulumi: 'El mismo stack escrito como programa.',
+  pulumi: 'El mismo stack escrito como programa JavaScript. Estado en S3 cifrado.',
   cloudformation: 'Plantilla nativa de AWS, un stack por tenant.',
 };
 
@@ -473,6 +473,11 @@ export function CreateTenantPage() {
                   {(draft.engine === 'terraform' || draft.engine === 'tofu') && (
                     <li>
                       Estado propio en S3: tenants/{draft.tenant_id}/{draft.env}/terraform.tfstate
+                    </li>
+                  )}
+                  {draft.engine === 'pulumi' && (
+                    <li>
+                      Stack Pulumi propio: {draft.tenant_id}-{draft.env} en el prefijo pulumi/ del bucket de estado
                     </li>
                   )}
                   {draft.engine === 'cloudformation' && (

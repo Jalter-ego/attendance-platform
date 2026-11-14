@@ -1,0 +1,8 @@
+# Uso manual (ver README.md). La plataforma genera su propio Pulumi.yaml por tenant con
+# `main` apuntando a esta carpeta y el backend S3 compartido.
+name: attendance-tenant
+description: Instalación de un tenant de Attendance (3 EC2) — mismo stack que infra/terraform/tenant
+runtime:
+  name: nodejs
+  options:
+    packagemanager: pnpm

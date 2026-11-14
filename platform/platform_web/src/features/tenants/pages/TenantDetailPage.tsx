@@ -15,7 +15,7 @@ import { Icon } from '../../../components/Icon';
 const versionLabels: Record<string, string> = {
   aws_sdk: 'SDK de AWS', template_sha256: 'Plantilla (SHA-256)', provider_aws: 'Proveedor AWS',
   image_version: 'AMIs (Packer)', ami: 'AMIs (Packer)', templates_commit: 'Plantillas (commit)',
-  templates: 'Plantillas (commit)', app: 'Aplicación',
+  templates: 'Plantillas (commit)', app: 'Aplicación', module: 'Módulo', engine: 'Motor',
 };
 
 function serviceHealth(deployment: TenantDetail['deployments'][number] | undefined) {
@@ -214,7 +214,7 @@ export function TenantDetailPage() {
               <summary>{engineNames[entry.engine]} · {new Date(entry.created_at).toLocaleString('es-BO')}</summary>
               <dl className="infra-versions">
                 {Object.entries(entry.tool_versions).map(([key, value]) => <div key={key}><dt>{versionLabels[key] ?? key}</dt><dd>{value && typeof value === 'object' ? JSON.stringify(value) : value ?? '—'}</dd></div>)}
-                {entry.outputs.stack_name && <div><dt>Stack de CloudFormation</dt><dd>{entry.outputs.stack_name}</dd></div>}
+                {entry.outputs.stack_name && <div><dt>Stack de {engineNames[entry.engine]}</dt><dd>{entry.outputs.stack_name}</dd></div>}
                 {Object.entries(entry.ami ?? {}).map(([key, value]) => <div key={key}><dt>AMI · {key}</dt><dd>{value}</dd></div>)}
                 <div><dt>Recursos</dt><dd>{entry.resources.map((resource) => `${resource.role}: ${resource.id}`).join(' · ') || '—'}</dd></div>
               </dl>

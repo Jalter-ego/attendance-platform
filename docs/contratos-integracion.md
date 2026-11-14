@@ -43,7 +43,7 @@ P2 define el detalle de `resources` y las interfaces de los adaptadores; P6 defi
 
 ### Adaptadores de motor (P2, implementado)
 
-- **Interfaz** `EngineAdapter` en `platform/platform_api/src/engines/adapter.js`: `versions`, `preview(ctx, {destroy})`, `apply`, `suspend`, `resume`, `destroy`, `outputs`. Terraform y OpenTofu comparten la implementación (`terraform.js`) y ejecutan los CLIs con el ejecutor común de P6. CloudFormation (`cloudformation.js`) usa el SDK de AWS: un stack `<project>-<tenant_id>-<env>` con `infra/cloudformation/tenant.yaml`, las mismas etiquetas (`ManagedBy=cloudformation`) y los mismos outputs comunes. Pulumi se agregará con la misma interfaz.
+- **Interfaz** `EngineAdapter` en `platform/platform_api/src/engines/adapter.js`: `versions`, `preview(ctx, {destroy})`, `apply`, `suspend`, `resume`, `destroy`, `outputs`. Terraform y OpenTofu comparten la implementación (`terraform.js`) y ejecutan los CLIs con el ejecutor común de P6. CloudFormation (`cloudformation.js`) usa el SDK de AWS: un stack `<project>-<tenant_id>-<env>` con `infra/cloudformation/tenant.yaml`, las mismas etiquetas (`ManagedBy=cloudformation`) y los mismos outputs comunes. Pulumi (`pulumi.js`) ejecuta el programa JavaScript `infra/pulumi/tenant` con un stack `organization/attendance-tenant/<tenant_id>-<env>`, las mismas etiquetas (`ManagedBy=pulumi`) y los mismos outputs comunes.
 - **`resources`**: lista de `{type, role, id}` derivada de los outputs. Por ejemplo, `{"type":"aws_instance","role":"db","id":"i-…"}` para cada EC2 y `{"type":"aws_ebs_volume","role":"db","id":"vol-…"}` para el disco de datos.
 - **`outputs`**: todos los outputs no sensibles del módulo (`urls`, `instance_ids`, `private_ips`, `db_volume_id`, `suspended`, `backup`, `releases`, etc.); los marcados `sensitive` se omiten.
 - **`tool_versions`**: `engine`, `terraform` o `tofu`, `provider_aws`, `image_version`, `image_git_commit`, `templates_commit` y `module`.
@@ -60,7 +60,7 @@ Un bucket nuevo, propio de este proyecto, almacena estados separados:
 | Bootstrap del bucket | `platform/bootstrap/terraform.tfstate` |
 | Red y recursos compartidos | `platform/base/terraform.tfstate` |
 | Tenant con Terraform/OpenTofu | `tenants/<tenant_id>/<env>/terraform.tfstate` |
-| Pulumi | Prefijo separado `pulumi/`; P2 configura stacks y cifrado de secretos |
+| Pulumi | `s3://<bucket>/pulumi/` (backend DIY con bloqueo por stack); un stack por tenant/entorno; cifrado con `PULUMI_SECRETS_PROVIDER` |
 | CloudFormation | Estado administrado por AWS; stack por tenant/entorno |
 
 Para Terraform/OpenTofu se utiliza el workspace `default`; la separación se hace con `key` y un directorio de ejecución por tenant. P6 debe impedir dos operaciones simultáneas del mismo tenant, y el backend S3 debe tener `use_lockfile=true`. Son protecciones complementarias. Los adaptadores siempre deben usar bloqueo y esperar un tiempo acotado, nunca deshabilitarlo.
@@ -76,6 +76,8 @@ H4/H5 dispone de `platform/platform_api/src/worker/services/command-runner.js`, 
 `services/tenant-secrets.js` entrega `ensureTenantSecrets(tenant, {signal, projectName})` antes del primer apply. Usa el SDK oficial de AWS y el perfil del worker; crea `/tenants/<id>/<env>/{db_password,jwt_secret,admin_password}` como SecureString con `alias/aws/ssm` y `Overwrite=false`. Consulta solo metadatos y devuelve `{ssm_prefix, created, reused}` con nombres. Conserva los existentes, también tras un fallo parcial; no rota ni elimina secretos. Registrar una institución y el diagnóstico siguen sin crear secretos ni EC2. Contrato, límites, ejemplos y pruebas: [worker](../platform/platform_api/src/worker/README.md).
 
 P6 ya conecta estos servicios en el handler `create`: congela configuración, prepara SSM, llama `apply → outputs → versions`, guarda recursos/accesos y ejecuta el health check de P4 antes de marcar `ready`. Los reintentos conservan el primer snapshot y la misma clave de estado. Terraform/OpenTofu/CloudFormation de P2 están registrados y el asistente está integrado. Para motores todavía no conectados, el botón queda deshabilitado y la API devuelve `503 ENGINE_NOT_AVAILABLE` sin escribir en AWS. La interfaz y los pasos para conectarlo están en [el contrato create de P2/P6](../platform/platform_api/src/worker/engines/README.md). Ejecutar `pnpm db:migrate` antes de reiniciar API/worker: se conservan ambas migraciones 003 y la nueva `004_unify_deployments.sql` unifica el esquema sin borrar tablas. El migrador contempla bases que ya aplicaron la 003 de P2 o la de P6.
+
+Pulumi congela `{type:"pulumi", url, stack}`: el mismo backend y stack en todos los reintentos y operaciones posteriores. No genera archivos Terraform; su directorio por tenant solo contiene `Pulumi.yaml` y la configuración del stack. Ver [Pulumi](../infra/pulumi/README.md).
 
 CloudFormation congela `{type:"cloudformation", region, stack_name}` en lugar de una clave S3; no requiere el bucket de tfstate ni genera archivos Terraform. Se guardan nombre/ARN del stack, SDK y hash de plantilla. El seguimiento confirma eventos con el token de la operación actual, tiene plazo máximo `IAC_TIMEOUT_S` y respeta cancelación/pérdida de propiedad; detener el seguimiento no revierte la operación remota. El ciclo API/worker está probado con clientes AWS simulados, pendiente de validación real en AWS.
 

@@ -3,6 +3,7 @@
 import { OperationError } from '../worker/errors.js';
 import { createTerraformAdapter } from './terraform.js';
 import { createCloudFormationAdapter } from './cloudformation.js';
+import { createPulumiAdapter } from './pulumi.js';
 
 /**
  * @typedef {object} EngineContext
@@ -35,7 +36,7 @@ import { createCloudFormationAdapter } from './cloudformation.js';
 export const ENGINES = {
   terraform: { label: 'Terraform', available: true },
   tofu: { label: 'OpenTofu', available: true },
-  pulumi: { label: 'Pulumi', available: false },
+  pulumi: { label: 'Pulumi', available: true },
   cloudformation: { label: 'CloudFormation', available: true },
 };
 
@@ -48,6 +49,7 @@ export function getAdapter(engine, config) {
   if (engine === 'terraform' || engine === 'tofu')
     return createTerraformAdapter(config, engine);
   if (engine === 'cloudformation') return createCloudFormationAdapter(config);
+  if (engine === 'pulumi') return createPulumiAdapter(config);
   throw new OperationError(
     'ENGINE_NOT_AVAILABLE',
     `El motor ${ENGINES[engine]?.label ?? engine} todavía no está conectado al worker.`,

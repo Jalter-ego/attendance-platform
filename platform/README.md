@@ -125,7 +125,7 @@ platform_web/src/
   lib/                       Cliente HTTP
 ```
 
-- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. CloudFormation conectado ([plantilla](../infra/cloudformation/README.md)). Pendiente: Pulumi. Registrar no equivale a aprovisionar.
+- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. CloudFormation ([plantilla](../infra/cloudformation/README.md)) y Pulumi ([programa](../infra/pulumi/README.md)) conectados. Registrar no equivale a aprovisionar.
 - **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
 - **P3/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`.
 - **P4:** pantalla **Planes** y API `/plans` (ver [Planes](#planes-p4)). Cada tenant guarda la copia del plan con la que se creó y los motores despliegan esa copia.
@@ -134,7 +134,7 @@ platform_web/src/
 H4/H5 ya tienen un [ejecutor común de procesos](platform_api/src/worker/README.md), integrado a los respaldos y a los motores IaC: progreso filtrado, timeout, cancelación del árbol de procesos y errores legibles. La cancelación se detecta también mientras el comando permanece en silencio. El servicio SSM prepara los tres secretos por tenant y conserva los existentes al reintentar.
 
 Para actualizar una base existente, ejecutar `pnpm db:migrate` y reiniciar API y worker. Las migraciones `003_create_deployments.sql` (P6) y `003_engines.sql` (P2) conservan sus archivos y checksums originales. El migrador resuelve su columna compartida si una de las dos ya estaba aplicada; `004_unify_deployments.sql` unifica los estados sin borrar datos. Se prueban tanto una base nueva como la actualización desde cada 003. No borrar tablas ni editar manualmente `schema_migrations`.
-- **P1/P2/P6:** el ciclo completo del worker usa Terraform/OpenTofu. El [adaptador y la plantilla de CloudFormation de P2](../infra/cloudformation/README.md) se usan para crear, suspender, reanudar y eliminar con vista previa. La actualización y el cambio de plan con CloudFormation quedan pendientes. Pulumi permite registro en integración. El modo local simula todos los motores.
+- **P1/P2/P6:** el ciclo completo del worker usa Terraform/OpenTofu. El [adaptador y la plantilla de CloudFormation de P2](../infra/cloudformation/README.md) se usan para crear, suspender, reanudar y eliminar con vista previa. El [programa y adaptador Pulumi de P2](../infra/pulumi/README.md) cubre las mismas operaciones, con stack propio en `s3://<IAC_STATE_BUCKET>/pulumi`. La actualización y el cambio de plan con CloudFormation y Pulumi quedan pendientes. El modo local simula todos los motores.
 - **P3/P4/P5:** los respaldos reales usan el script de P3; el worker usa los scripts de actualización y salud de P4. Alertas y resultados de seguridad se reciben mediante el token opcional de servicio.
 
 Las contraseñas se guardan con scrypt. En sesiones solo se conserva el hash del token. El rol `tenant_admin` limita la lectura a su institución. El administrador de plataforma gestiona esas cuentas, edita el catálogo y consulta la auditoría. El historial combina el estado de los trabajos con registros de cambios de acceso, catálogo, registro de instituciones y solicitudes de cancelación.
@@ -218,7 +218,7 @@ La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índic
 
 ### Configurar el worker
 
-1. Instalar Terraform ≥ 1.10 (u OpenTofu ≥ 1.10 para tenants con `engine=tofu`) y, si se quiere la vista previa, Python 3.
+1. Instalar Terraform ≥ 1.10 (u OpenTofu ≥ 1.10 para tenants con `engine=tofu`) y, si se quiere la vista previa, Python 3. Para tenants con `engine=pulumi`: Pulumi CLI ≥ 3.150, `pnpm --dir infra/pulumi/tenant install` y `PULUMI_CONFIG_PASSPHRASE` (o `PULUMI_SECRETS_PROVIDER=awskms://...`) en el `.env`.
 2. Dar credenciales AWS al proceso del worker (`AWS_PROFILE` o `AWS_*`). Necesitan permisos sobre el módulo tenant, el bucket del estado y, en `/tenants/*`, `ssm:DescribeParameters`, `ssm:PutParameter` y `ssm:AddTagsToResource`.
 3. En `platform_api/.env`, definir `IAC_STATE_BUCKET=<bucket del estado>`. El nombre anterior `DEPLOYMENT_STATE_BUCKET` sigue funcionando como alias. Si se conservan ambos deben coincidir. También se aceptan los aliases anteriores de rutas; no configurar dos valores distintos. Ver `.env.example`.
 4. Exportar los outputs de la base a `.local/base.outputs.json` con el comando de arriba.
@@ -229,7 +229,7 @@ Para crear la infraestructura de un tenant:
 - **Desde la UI:** wizard **Crear tenant** (`/tenants/new`) con la casilla *Crear la infraestructura al confirmar*, o detalle del tenant → **Crear infraestructura**.
 - **Desde la API:** `POST /api/v1/tenants/<uuid>/operations` con `{"type":"create"}`.
 
-Para probar sin AWS (terraform simulado): `pnpm test:engines`.
+Para probar sin AWS: `pnpm test:engines` (terraform simulado), `pnpm test:cloudformation` (SDK simulado) y `pnpm test:pulumi` (CLI simulado).
 Las rutas de ciclo de vida también se pueden usar como `POST /tenants/:id/{suspend,resume,upgrade,backup,restore,retry}`, `POST /tenants/:id/plan-change/preview` y `/plan-change`. Para eliminar, `POST /tenants/:id/delete-preview` encola el cálculo, `GET /tenants/:id/delete-preview` devuelve la última vista previa vigente del operador y `DELETE /tenants/:id` confirma con `{preview_id,confirm:true}`. El reintento por tenant recibe `{operation_id}`. Las rutas usan la misma cola del panel.
 
 ## Respaldos (P3)
@@ -293,7 +293,7 @@ La suite comprueba el ejecutor de procesos, filtrado de secretos, respaldos de P
 
 Para comprobar SQL, sesiones, permisos y el ciclo simulado con PostgreSQL real, inicia la API y el worker en modo local con una base dedicada y ejecuta `pnpm test:e2e:local`. La prueba crea y elimina un tenant de prueba. Usa `LOCAL_E2E_URL` si el servidor no está en el puerto 4100.
 
-La suite `pnpm test:integration` verifica la ruta de creación de PR #26 con PostgreSQL real y dobles de Terraform, CloudFormation, SSM y salud. Define `TEST_DATABASE_URL` para una base local desechable cuyo nombre comience por `platform_test`. La suite reconstruye el esquema público de esa base.
+La suite `pnpm test:integration` verifica la ruta de creación de PR #26 con PostgreSQL real y dobles de Terraform, CloudFormation, Pulumi, SSM y salud. Define `TEST_DATABASE_URL` para una base local desechable cuyo nombre comience por `platform_test`. La suite reconstruye el esquema público de esa base.
 
 Desde `platform/platform_web/`:
 
