@@ -41,6 +41,8 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [[ "$TIMEOUT" =~ ^[0-9]+$ && "$INTERVAL" =~ ^[1-9][0-9]*$ ]] || die "--timeout e --interval son segundos"
 [ -z "$URL" ] || [[ "$URL" =~ ^https?://[^[:space:]]+$ ]] || die "--url inválida"
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION" MSYS_NO_PATHCONV=1
+# AWS CLI en Windows: sin UTF-8 no puede mostrar los acentos de boot.json (probado por P3).
+export AWS_CLI_OUTPUT_ENCODING=UTF-8
 command -v curl >/dev/null || die "falta curl"
 
 # AWS CLI en Windows (worker con Git Bash) devuelve \r\n: se limpia todo lo que se lee de ella.
@@ -108,7 +110,7 @@ if $BOOT; then
     fi
     CMD_ID=$(aws_text ssm send-command --instance-ids "$ID" --document-name AWS-RunShellScript \
       --comment "health $TENANT/$ENV_NAME $role" --timeout-seconds 60 \
-      --parameters '{"commands":["cat /var/lib/attendance/boot.json 2>/dev/null || echo null"],"executionTimeout":["60"]}' \
+      --parameters '{"commands":["jq -c . /var/lib/attendance/boot.json 2>/dev/null || echo null"],"executionTimeout":["60"]}' \
       --query Command.CommandId || true)
     STATE="" OUT=""
     for _ in $(seq 1 12); do
