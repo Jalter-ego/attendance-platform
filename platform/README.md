@@ -2,7 +2,7 @@
 
 Usamos el frontend React/Vite inicializado en `platform_web/`. `platform_api/` es un backend **Node.js + Express, en JavaScript**, con PostgreSQL. La API y el worker se ejecutan como procesos separados y comparten código y base de datos. No hace falta Redis.
 
-Esta base permite iniciar sesión, conservar la sesión al recargar, registrar/listar/consultar instituciones y ejecutar un diagnóstico con progreso, eventos, cancelación y reintento. Registrar una institución **no despliega servidores**. El diagnóstico tampoco llama a AWS. Falta conectar los adaptadores reales de P2, SSM y las comprobaciones de salud del despliegue.
+Esta base permite iniciar sesión, conservar la sesión al recargar, registrar/listar/consultar instituciones y ejecutar operaciones con progreso, eventos, cancelación y reintento. Registrar una institución **no despliega servidores**. El flujo separado `create` ya prepara secretos, llama al adaptador del motor, guarda recursos/versiones y comprueba la salud con el script de P4. Los adaptadores reales de P2 para Terraform, OpenTofu y CloudFormation ya están conectados; el asistente permite registrar y encolar la creación. Falta verificar el recorrido completo contra AWS. El diagnóstico sigue funcionando sin llamar a AWS.
 
 ## Arrancar en local
 
@@ -97,8 +97,9 @@ platform_api/
   src/modules/auth/          Sesiones y permisos
   src/modules/tenants/       Registro, filtros y detalle
   src/modules/operations/    Cola, consultas y eventos
+  src/modules/deployments/   Configuración congelada y resultados del despliegue
   src/worker/                Proceso que reclama y ejecuta trabajos
-  src/engines/               EngineAdapter, Terraform/OpenTofu, secretos SSM y health checks (P2)
+  src/engines/               EngineAdapter, Terraform/OpenTofu y CloudFormation (P2)
   src/modules/provisioning/  Operaciones create/suspend/resume/destroy del worker (P2)
   src/db/                    Conexiones y transacciones
   src/lib/                   Errores, contraseñas y redacción de logs
@@ -114,9 +115,11 @@ platform_web/src/
 - **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. CloudFormation conectado ([plantilla](../infra/cloudformation/README.md)). Pendiente: Pulumi. Registrar no equivale a aprovisionar.
 - **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
 - **P3/P4/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`. El catálogo inicial se consulta desde la API; P4 puede ampliarlo mediante nuevas migraciones y sus endpoints.
-- **P6:** el ejecutor común y el servicio SSM ya están conectados al flujo de creación de P2 (`src/modules/provisioning/`), junto con los health checks y la persistencia de deployments/outputs/versiones.
+- **P6:** el ejecutor común y el servicio SSM ya están conectados al flujo de creación de P2 (`src/worker/handlers/create.handler.js`), junto con el health check de P4 y la persistencia de deployments/outputs/versiones. Suspender/reanudar/eliminar conservan los adaptadores de P2 y la finalización protegida por el worker.
 
 H4/H5 ya tienen un [ejecutor común de procesos](platform_api/src/worker/README.md), integrado a los respaldos y a los motores IaC: progreso filtrado, timeout, cancelación del árbol de procesos y errores legibles. La cancelación se detecta también mientras el comando permanece en silencio. El servicio SSM prepara los tres secretos por tenant y conserva los existentes al reintentar.
+
+Para actualizar una base existente, ejecutar `pnpm db:migrate` y reiniciar API y worker. Las migraciones `003_create_deployments.sql` (P6) y `003_engines.sql` (P2) conservan sus archivos y checksums originales. El migrador resuelve su columna compartida si una de las dos ya estaba aplicada; `004_unify_deployments.sql` unifica los estados sin borrar datos. Se prueban tanto una base nueva como la actualización desde cada 003. No borrar tablas ni editar manualmente `schema_migrations`.
 
 Las tablas iniciales son `users`, `sessions`, `plans`, `tenants`, `operations`, `operation_events` y `deployments`. Las contraseñas se guardan con scrypt; en sesiones solo se conserva el hash del token. No hay registro público de usuarios. Se contempla `tenant_admin` para lectura limitada a su institución; falta su pantalla/flujo de alta. Auditoría, alertas y escáneres se integrarán en sus bloques respectivos. RF-04/05/06/15/19/20 siguen siendo opcionales.
 
@@ -134,7 +137,7 @@ Prefijo: `/api/v1`. Los cuerpos son JSON y la autenticación usa la cookie HttpO
 | `GET /engines` | Motores del wizard: `{code,label,available}`; `available=false` = aún sin adaptador | Sesión |
 | `GET /tenants` | `q`, `status`, `env`, `plan`, `limit`, `offset` | Sesión, filtrado por permisos |
 | `POST /tenants` | Registrar institución, sin desplegar | Administrador de plataforma |
-| `GET /tenants/:id` | Datos, últimas 20 operaciones y 10 despliegues | Sesión, filtrado por permisos |
+| `GET /tenants/:id` | Datos, últimas 20 operaciones, 10 despliegues y disponibilidad de `creation` | Sesión, filtrado por permisos |
 | `GET /tenants/:id/backups` | Respaldos del tenant (dumps S3 + snapshots EBS), consultados en AWS al momento | Sesión, filtrado por permisos |
 | `POST /tenants/:id/operations` | `{type:"diagnostic"}`, `{type:"backup"}`, `{type:"restore",backup_id:"<id>|latest"}`, `{type:"create"}`, `{type:"suspend"}`, `{type:"resume"}` o `{type:"destroy",confirm:"<tenant_id>"}`; devuelve `202` | Administrador de plataforma |
 | `GET /operations/:id` | Estado, etapa y porcentaje | Sesión, filtrado por permisos |
@@ -158,7 +161,7 @@ Entrada de registro:
 }
 ```
 
-Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Crear, suspender, reanudar y eliminar la infraestructura funcionan con Terraform/OpenTofu: ver [Motores IaC](#motores-iac-p2). Respaldar y restaurar: ver [Respaldos](#respaldos-p3).
+Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Crear, suspender, reanudar y eliminar la infraestructura están conectadas con Terraform/OpenTofu y CloudFormation: ver [Motores IaC](#motores-iac-p2). Respaldar y restaurar: ver [Respaldos](#respaldos-p3).
 
 La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo y consulta la cancelación aunque no haya logs. Al perder la propiedad, se detiene el proceso local sin sobrescribir al nuevo dueño. Se admite cancelar y reintentar cualquier operación. El reintento de IaC vuelve a planificar sobre el mismo estado del tenant: completa lo pendiente sin duplicar recursos.
 
@@ -169,11 +172,11 @@ El worker crea y administra la infraestructura de cada tenant con el motor elegi
 - **Terraform** y **OpenTofu**, que ejecutan el módulo [`infra/terraform/tenant`](../infra/terraform/tenant/README.md) de P1.
 - **CloudFormation**, que ejecuta la plantilla [`infra/cloudformation/tenant.yaml`](../infra/cloudformation/README.md) con el mismo stack, usando change sets y el SDK de AWS. Suspender y reanudar van por la API de EC2 (D5).
 
-Pulumi aparece en el registro, pero la API rechaza sus operaciones con `409 ENGINE_NOT_AVAILABLE` hasta que tenga adaptador. Lo que sigue en esta sección describe Terraform/OpenTofu; CloudFormation se documenta en su README.
+Pulumi aparece en el registro, pero la API rechaza sus operaciones con `503 ENGINE_NOT_AVAILABLE` hasta que tenga adaptador. Lo que sigue en esta sección describe Terraform/OpenTofu; CloudFormation se documenta en su README.
 
 | Operación | Estados admitidos | Resultado | Qué hace |
 | --- | --- | --- | --- |
-| `create` | `draft`, `failed` | `ready` | Secretos en SSM → `init` → `plan` → `apply` → outputs → health checks → `deployments` |
+| `create` | `draft`, `failed` | `ready` | Secretos en SSM → `init` → `plan` → `apply` → outputs → guardar recursos → health P4 → `ready` |
 | `suspend` | `ready`, `failed` | `suspended` | `apply` con `suspended=true`: detiene las 3 EC2 y conserva los discos |
 | `resume` | `suspended`, `failed` | `ready` | `apply` con `suspended=false`, health checks y URLs nuevas (la IP pública cambia) |
 | `destroy` | todos menos `deleted` | `deleted` | `plan -destroy` → `apply`. Exige `confirm` igual al `tenant_id` (RF-18) |
@@ -186,7 +189,7 @@ Los comandos se ejecutan con el [ejecutor común de P6](platform_api/src/worker/
 
 ### Cómo se ejecuta y dónde queda el estado
 
-- **Directorio por tenant:** `.local/runs/<tenant_id>/<env>/` (fuera de Git) guarda:
+- **Directorio por tenant:** `.local/runs/<tenant_id>/<env>/<engine>/` (fuera de Git) guarda:
   - una copia de los `.tf` del módulo, que se refresca en cada operación;
   - su propio `.terraform/`;
   - `tenant.tfvars.json`, `backend.hcl` y el plan temporal.
@@ -197,6 +200,8 @@ Los comandos se ejecutan con el [ejecutor común de P6](platform_api/src/worker/
   - el tenant y su plan (`plans.sizing` y `limits`, y respaldo semanal o diario según el plan);
   - los outputs de la base (`IAC_BASE_OUTPUTS`), generados con `terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json`;
   - las AMIs de `infra/packer/ami-ids.json`.
+
+  La primera operación congela base, bucket/clave, plan, límites, respaldos y AMIs en `operations.params.deployment`. Los reintentos y las operaciones de suspensión/reanudación/eliminación conservan esa configuración; cambiar el catálogo o `.env` no debe modificar una instalación parcial. Cambiar plan/AMI requiere un flujo explícito posterior.
 - **Secretos:** antes del primer `apply`, el servicio SSM de P6 (`worker/services/tenant-secrets.js`) crea `/tenants/<id>/<env>/{db_password,jwt_secret,admin_password}` como `SecureString`.
   - Si ya existen, se reutilizan y no se reemplazan.
   - Nunca llegan al tfstate, a las variables ni a los eventos; los eventos solo muestran los nombres.
@@ -214,9 +219,9 @@ Los comandos se ejecutan con el [ejecutor común de P6](platform_api/src/worker/
 
 1. Instalar Terraform ≥ 1.10 (u OpenTofu ≥ 1.10 para tenants con `engine=tofu`) y, si se quiere la vista previa, Python 3.
 2. Dar credenciales AWS al proceso del worker (`AWS_PROFILE` o `AWS_*`). Necesitan permisos sobre el módulo tenant, el bucket del estado y, en `/tenants/*`, `ssm:DescribeParameters`, `ssm:PutParameter` y `ssm:AddTagsToResource`.
-3. En `platform_api/.env`, definir `IAC_STATE_BUCKET=<bucket del estado>`. Las demás variables tienen valores por defecto (ver `.env.example`).
+3. En `platform_api/.env`, definir `IAC_STATE_BUCKET=<bucket del estado>`. El nombre anterior `DEPLOYMENT_STATE_BUCKET` sigue funcionando como alias. Si se conservan ambos deben coincidir. También se aceptan los aliases anteriores de rutas; no configurar dos valores distintos. Ver `.env.example`.
 4. Exportar los outputs de la base a `.local/base.outputs.json` con el comando de arriba.
-5. Ejecutar `pnpm db:migrate` (aplica `003_engines.sql`) y luego `pnpm worker`.
+5. Ejecutar `pnpm db:migrate` (ambas 003 y la reconciliación 004, según lo ya aplicado), reiniciar la API y ejecutar `pnpm worker`.
 
 Para crear la infraestructura de un tenant:
 
@@ -244,9 +249,15 @@ cd platform/platform_api
 pnpm test
 ```
 
-La suite actual contiene 33 pruebas: ejecutor de procesos, filtrado de secretos, respaldos de P3, cancelación/propiedad del worker y preparación de SSM. Usa procesos ficticios, un doble de conexión y un cliente SSM simulado; no carga `.env`, no conecta a AWS ni modifica PostgreSQL. Incluye hijos que ignoran SIGTERM, cancelación sin logs, fallo parcial de secretos y reintentos sin cambiar credenciales. Ver [el contrato del ejecutor y las pruebas](platform_api/src/worker/README.md).
+La suite actual contiene 65 pruebas: adaptadores de Terraform/OpenTofu/CloudFormation, ejecutor de procesos, filtrado de secretos, respaldos de P3, cancelación/propiedad del worker y preparación de SSM. Usa procesos ficticios, un doble de conexión y un cliente SSM simulado; no carga `.env`, no conecta a AWS ni modifica PostgreSQL. Incluye hijos que ignoran SIGTERM, cancelación sin logs, fallo parcial de secretos y reintentos sin cambiar credenciales. Ver [el contrato del ejecutor y las pruebas](platform_api/src/worker/README.md).
 
-La comprobación de SQL, sesiones y permisos contra PostgreSQL real requiere su propia prueba de integración; el script `test:integration` no está disponible en este checkout. No ejecutar pruebas destructivas sobre la base de Supabase usada por el equipo.
+La suite separada de integración contiene 22 escenarios con PostgreSQL real: cinco migraciones y actualización desde las dos 003 anteriores, sesiones/permisos, creación concurrente, persistencia, salud inválida/fallida, cancelación, reintentos y pérdida de propiedad. Incluye el flujo API → cola → adaptador real de P2 → persistencia, usando un CLI ficticio o clientes SDK simulados; CloudFormation se prueba sin bucket de tfstate y conserva su stack/SDK/hash. SSM y health también están simulados; no crea recursos en AWS. Requiere una base **local y desechable**, previamente creada, cuyo nombre comience por `platform_test`:
+
+```bash
+TEST_DATABASE_URL=postgresql://attendance:attendance_local@127.0.0.1:5433/platform_test_create pnpm test:integration
+```
+
+La suite elimina y reconstruye el esquema público de esa base. No carga `.env` y rechaza hosts remotos; no usar la base de Supabase del equipo. Ver más detalles en el [contrato del flujo create](platform_api/src/worker/engines/README.md).
 
 Frontend, desde `platform/platform_web/`:
 

@@ -5,6 +5,9 @@ import { appendEvent } from '../modules/operations/operations.service.js';
 import { redact } from '../lib/redact.js';
 import { CommandError } from './services/command-runner.js';
 import { OperationCancelled, OperationError, LeaseLost } from './errors.js';
+import { runCreateOperation } from './handlers/create.handler.js';
+import { createEngineAdapters } from './engines/index.js';
+import { finishCreation } from '../modules/deployments/deployments.service.js';
 import {
   runBackupOperation,
   ScriptError,
@@ -17,7 +20,7 @@ const handlers = {
   backup: runBackupOperation,
   restore: runBackupOperation,
   // P2: motores IaC (src/engines) a través de provisioning.service.js.
-  create: runInfraOperation,
+  create: runCreateOperation,
   suspend: runInfraOperation,
   resume: runInfraOperation,
   destroy: runInfraOperation,
@@ -26,16 +29,18 @@ const handlers = {
 export async function recoverStale(pool, staleMs) {
   return transaction(pool, async (client) => {
     const result = await client.query(
-      "UPDATE operations SET status = 'failed', stage = 'Worker interrumpido', error_message = 'El worker dejó de responder. Revisa la operación antes de reintentar.', worker_id = NULL, finished_at = now() WHERE status = 'running' AND heartbeat_at < now() - ($1 * interval '1 millisecond') RETURNING id",
+      "UPDATE operations SET status = 'failed', stage = 'Worker interrumpido', error_message = 'El worker dejó de responder. Revisa la operación antes de reintentar.', worker_id = NULL, finished_at = now() WHERE status = 'running' AND heartbeat_at < now() - ($1 * interval '1 millisecond') RETURNING id, type, tenant_id",
       [staleMs],
     );
-    for (const operation of result.rows)
+    for (const operation of result.rows) {
+      await finishCreation(client, operation, 'failed');
       await appendEvent(
         client,
         operation.id,
         'error',
         'El worker dejó de responder. La operación no se reejecutará automáticamente.',
       );
+    }
     return result.rowCount;
   });
 }
@@ -82,7 +87,8 @@ const steps = [
 // Los handlers de los motores (P2) están en `handlers`. El diagnóstico nunca llama a AWS.
 export async function runOnce(
   pool,
-  { workerId = randomUUID(), signal, stepDelayMs = 350, heartbeatMs = 5000, config } = {},
+  { workerId = randomUUID(), signal, stepDelayMs = 350, heartbeatMs = 5000, config,
+    adapters = createEngineAdapters(config), creationServices } = {},
 ) {
   const operation = await claimOperation(pool, workerId);
   if (!operation) return false;
@@ -113,7 +119,7 @@ export async function runOnce(
     transaction(pool, async (client) => {
       const result = await client.query(
         "UPDATE operations SET stage = COALESCE($3, stage), progress = COALESCE($4, progress), heartbeat_at = now() WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING cancel_requested",
-        [operation.id, workerId, stage === null ? null : redact(stage).slice(0, 120), progress],
+        [operation.id, workerId, stage === null ? null : redact(stage).slice(0, 100), progress],
       );
       if (!result.rowCount) throw new LeaseLost();
       if (result.rows[0].cancel_requested) throw new OperationCancelled();
@@ -131,6 +137,9 @@ export async function runOnce(
         pool,
         config,
         operation,
+        workerId,
+        adapters,
+        creationServices,
         report,
         signal: jobSignal,
       });
@@ -153,7 +162,7 @@ export async function runOnce(
   }
   await transaction(pool, async (client) => {
     const result = await client.query(
-      "UPDATE operations SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE $3 END, stage = CASE WHEN cancel_requested OR $3 = 'cancelled' THEN 'Cancelada' WHEN $3 = 'succeeded' THEN 'Completada' ELSE 'Fallida' END, error_message = CASE WHEN cancel_requested THEN NULL ELSE $4 END, result = $5::jsonb, finished_at = now(), worker_id = NULL WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING status",
+      "UPDATE operations SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE $3 END, stage = CASE WHEN cancel_requested OR $3 = 'cancelled' THEN 'Cancelada' WHEN $3 = 'succeeded' THEN 'Completada' ELSE 'Fallida' END, progress = CASE WHEN NOT cancel_requested AND $3='succeeded' THEN 100 ELSE progress END, error_message = CASE WHEN cancel_requested THEN NULL ELSE $4 END, result = $5::jsonb, finished_at = now(), worker_id = NULL WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING status, type, tenant_id, id",
       [
         operation.id,
         workerId,
@@ -162,7 +171,8 @@ export async function runOnce(
         output === null ? null : JSON.stringify(output),
       ],
     );
-    if (result.rowCount)
+    if (result.rowCount) {
+      await finishCreation(client, result.rows[0], result.rows[0].status);
       await appendEvent(
         client,
         operation.id,
@@ -173,6 +183,7 @@ export async function runOnce(
             ? 'Operación cancelada.'
             : errorMessage,
       );
+    }
   });
   return true;
 }

@@ -24,8 +24,9 @@ import {
 import { listBackups } from './modules/backups/backups.service.js';
 import { ENGINES } from './engines/adapter.js';
 import { BACKUP_BY_PLAN } from './engines/tenant-input.js';
+import { creationAvailability, createEngineAdapters } from './worker/engines/index.js';
 
-export function createApp({ pool, config }) {
+export function createApp({ pool, config, adapters = createEngineAdapters(config) }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
@@ -123,7 +124,9 @@ export function createApp({ pool, config }) {
   // P2: motores del selector del wizard y si ya tienen adaptador conectado al worker.
   api.get('/engines', (_request, response) =>
     response.json({
-      items: Object.entries(ENGINES).map(([code, engine]) => ({ code, ...engine })),
+      items: Object.entries(ENGINES).map(([code, engine]) => ({
+        code, ...engine, available: creationAvailability(code, adapters).available,
+      })),
     }),
   );
   api.get('/tenants', async (request, response) =>
@@ -132,9 +135,10 @@ export function createApp({ pool, config }) {
   api.post('/tenants', requireAdmin, async (request, response) =>
     response.status(201).json(await registerTenant(pool, request.body)),
   );
-  api.get('/tenants/:id', async (request, response) =>
-    response.json(await tenantDetail(pool, request.user, request.params.id)),
-  );
+  api.get('/tenants/:id', async (request, response) => {
+    const tenant = await tenantDetail(pool, request.user, request.params.id);
+    response.json({ ...tenant, creation: creationAvailability(tenant.engine, adapters) });
+  });
   api.get('/tenants/:id/backups', async (request, response) =>
     response.json(
       await listBackups(pool, config, request.user, request.params.id),
@@ -143,7 +147,7 @@ export function createApp({ pool, config }) {
   api.post('/tenants/:id/operations', requireAdmin, async (request, response) =>
     response
       .status(202)
-      .json(await enqueue(pool, request.user, request.params.id, request.body)),
+      .json(await enqueue(pool, request.user, request.params.id, request.body, null, { config, adapters })),
   );
   api.get('/operations/:id', async (request, response) =>
     response.json(await getOperation(pool, request.user, request.params.id)),
@@ -159,7 +163,7 @@ export function createApp({ pool, config }) {
   api.post('/operations/:id/retry', requireAdmin, async (request, response) =>
     response
       .status(202)
-      .json(await retryOperation(pool, request.user, request.params.id)),
+      .json(await retryOperation(pool, request.user, request.params.id, { config, adapters })),
   );
   app.use('/api/v1', api);
   app.use((_request, _response, next) =>

@@ -5,6 +5,10 @@ import { HttpError } from '../../lib/errors.js';
 import { redact } from '../../lib/redact.js';
 import { getTenant, uuid } from '../tenants/tenants.service.js';
 import { backupIdInput } from '../backups/backups.service.js';
+import { buildSnapshot, validateSnapshot } from '../deployments/deployment-config.js';
+import { finishCreation, infrastructureStates } from '../deployments/deployments.service.js';
+import { getEngineAdapter, createEngineAdapters } from '../../worker/engines/index.js';
+import { OperationError } from '../../worker/errors.js';
 import { assertCanEnqueue } from '../provisioning/provisioning.service.js';
 
 export async function appendEvent(client, id, level, message) {
@@ -16,20 +20,45 @@ export async function appendEvent(client, id, level, message) {
 
 const operationInput = z.discriminatedUnion('type', [
   z.object({ type: z.literal('diagnostic') }).strict(),
+  z.object({ type: z.literal('create') }).strict(),
   z.object({ type: z.literal('backup') }).strict(),
   z.object({ type: z.literal('restore'), backup_id: backupIdInput }).strict(),
-  // P2: infraestructura con el motor del tenant. destroy exige confirm = tenant_id (RF-18).
-  z.object({ type: z.literal('create') }).strict(),
+  // P2: destroy exige confirm = tenant_id (RF-18).
   z.object({ type: z.literal('suspend') }).strict(),
   z.object({ type: z.literal('resume') }).strict(),
   z.object({ type: z.literal('destroy'), confirm: z.string().max(40) }).strict(),
 ]);
 
-export async function enqueue(pool, user, tenantId, input, retryOf = null) {
+export async function enqueue(pool, user, tenantId, input, retryOf = null, { config, adapters = createEngineAdapters(config) } = {}) {
   const tenant = await getTenant(pool, user, tenantId);
   const { type, ...params } = operationInput.parse(input);
-  assertCanEnqueue(tenant, type, params);
+  const infrastructure = Object.hasOwn(infrastructureStates, type);
+  if (infrastructure) {
+    try { getEngineAdapter(tenant.engine, adapters); }
+    catch (error) { throw new HttpError(503, 'ENGINE_NOT_AVAILABLE', error.message); }
+  }
   return transaction(pool, async (client) => {
+    if (infrastructure) {
+      const current = (await client.query('SELECT * FROM tenants WHERE id = $1 FOR UPDATE', [tenantId])).rows[0];
+      const active = await client.query("SELECT id FROM operations WHERE tenant_id=$1 AND status IN ('queued','running')", [tenantId]);
+      if (active.rowCount) throw new HttpError(409, 'TENANT_BUSY', 'Esta institución ya tiene una operación pendiente.');
+      if (!current || (type === 'create' && !['draft', 'failed'].includes(current.status)))
+        throw new HttpError(409, 'TENANT_ALREADY_DEPLOYED', 'Esta institución ya está desplegada o tiene un cambio en curso.');
+      assertCanEnqueue(current, type, params);
+      // También una nueva solicitud tras un fallo reutiliza el primer snapshot.
+      const previous = await client.query("SELECT params FROM operations WHERE tenant_id=$1 AND params ? 'deployment' ORDER BY created_at, id LIMIT 1", [tenantId]);
+      try {
+        if (previous.rowCount) params.deployment = validateSnapshot(previous.rows[0].params.deployment, current);
+        else {
+          const plan = (await client.query('SELECT * FROM plans WHERE code = $1', [current.plan])).rows[0];
+          if (!plan) throw new HttpError(409, 'PLAN_NOT_FOUND', 'El plan de esta institución ya no está disponible.');
+          params.deployment = await buildSnapshot(current, plan, config);
+        }
+      } catch (error) {
+        if (error instanceof OperationError) throw new HttpError(503, error.code, error.message);
+        throw error;
+      }
+    }
     const result = await client.query(
       'INSERT INTO operations(id, tenant_id, type, initiated_by, retry_of, params) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
       [randomUUID(), tenantId, type, user.id, retryOf, params],
@@ -40,6 +69,7 @@ export async function enqueue(pool, user, tenantId, input, retryOf = null) {
       'info',
       'Operación en cola. Esperando al worker.',
     );
+    if (infrastructure) await client.query('UPDATE tenants SET status=$2, updated_at=now() WHERE id=$1', [tenantId, infrastructureStates[type].running]);
     return result.rows[0];
   });
 }
@@ -96,11 +126,12 @@ export async function cancelOperation(pool, user, id) {
       'warning',
       'Se solicitó cancelar la operación.',
     );
+    if (result.rows[0].status === 'cancelled') await finishCreation(client, result.rows[0], 'cancelled');
     return result.rows[0];
   });
 }
 
-export async function retryOperation(pool, user, id) {
+export async function retryOperation(pool, user, id, options) {
   const previous = await getOperation(pool, user, id);
   if (!['failed', 'cancelled'].includes(previous.status))
     throw new HttpError(
@@ -112,7 +143,10 @@ export async function retryOperation(pool, user, id) {
     pool,
     user,
     previous.tenant_id,
-    { type: previous.type, ...previous.params },
+    Object.hasOwn(infrastructureStates, previous.type)
+      ? { type: previous.type, ...(previous.type === 'destroy' ? { confirm: previous.params.confirm } : {}) }
+      : { type: previous.type, ...previous.params },
     previous.id,
+    options,
   );
 }

@@ -12,7 +12,9 @@ import {
   summarizeChanges,
 } from '../src/engines/cloudformation.js';
 import { BACKUP_BY_PLAN } from '../src/engines/tenant-input.js';
-import { OperationError } from '../src/worker/errors.js';
+import { OperationError, OperationCancelled } from '../src/worker/errors.js';
+import { fakeCloudFormation } from './fixtures/fake-cloudformation.js';
+import { publicDeployment } from '../src/modules/deployments/deployment-config.js';
 
 const input = {
   tenant_id: 'demo-cfn',
@@ -42,148 +44,15 @@ const input = {
   },
 };
 
-const notFound = (name) =>
-  Object.assign(new Error(`Stack with id ${name} does not exist`), { name: 'ValidationError' });
+const fakeAws = (scenario) => fakeCloudFormation(input, scenario);
 
-/**
- * AWS simulado. `scenario`:
- *  - changes: cambios del change set; FAILED sin cambios si es [] en UPDATE.
- *  - executeResult: estado final al ejecutar (CREATE_COMPLETE, ROLLBACK_COMPLETE...).
- *  - failReason: motivo del evento *_FAILED.
- *  - existing: estado inicial del stack (null = no existe).
- *  - roleTag: etiqueta Role de la AMI de db (para probar la validación).
- */
-function fakeAws(scenario = {}) {
-  const calls = [];
-  const instances = {
-    'i-f': { state: 'running', ip: '3.3.3.3' },
-    'i-b': { state: 'running' },
-    'i-d': { state: 'running' },
-  };
-  let stack = scenario.existing
-    ? { StackId: 'arn:stack/demo/1', StackStatus: scenario.existing, Outputs: [] }
-    : null;
-  let events = [];
-  const outputs = [
-    ['FrontendInstanceId', 'i-f'],
-    ['BackendInstanceId', 'i-b'],
-    ['DbInstanceId', 'i-d'],
-    ['FrontendPrivateIp', '10.0.1.10'],
-    ['BackendPrivateIp', '10.0.2.10'],
-    ['DbPrivateIp', '10.0.2.20'],
-    ['FrontendPublicIp', '3.3.3.3'],
-    ['DbVolumeId', 'vol-1'],
-    ['SsmPrefix', '/tenants/demo-cfn/test'],
-  ].map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue }));
-  const event = (logical, status, reason) => ({
-    EventId: `${logical}-${status}-${events.length}`,
-    Timestamp: new Date(Date.now() + 1000),
-    LogicalResourceId: logical,
-    ResourceType: 'AWS::EC2::Instance',
-    ResourceStatus: status,
-    ResourceStatusReason: reason,
-  });
-  const cfn = {
-    async send(command) {
-      const name = command.constructor.name;
-      const params = command.input;
-      calls.push({ name, params });
-      switch (name) {
-        case 'DescribeStacksCommand':
-          if (!stack) throw notFound(params.StackName);
-          if (stack.StackStatus === 'DELETE_COMPLETE' && params.StackName !== stack.StackId)
-            throw notFound(params.StackName);
-          return { Stacks: [stack] };
-        case 'CreateChangeSetCommand':
-          if (params.ChangeSetType === 'CREATE')
-            stack = { StackId: 'arn:stack/demo/2', StackStatus: 'REVIEW_IN_PROGRESS', Outputs: [] };
-          return { Id: 'cs-1' };
-        case 'DescribeChangeSetCommand': {
-          const changes = scenario.changes ?? [];
-          if (!changes.length && stack.StackStatus !== 'REVIEW_IN_PROGRESS')
-            return { Status: 'FAILED', StatusReason: "The submitted information didn't contain changes." };
-          return { Status: 'CREATE_COMPLETE', Changes: changes };
-        }
-        case 'ExecuteChangeSetCommand': {
-          const final = scenario.executeResult ?? 'CREATE_COMPLETE';
-          events = [
-            event('DbInstance', 'CREATE_IN_PROGRESS'),
-            ...(final.includes('ROLLBACK')
-              ? [event('DbInstance', 'CREATE_FAILED', scenario.failReason), event('FrontendInstance', 'CREATE_FAILED', 'Resource creation cancelled')]
-              : [event('DbInstance', 'CREATE_COMPLETE')]),
-          ].reverse();
-          stack = { ...stack, StackStatus: final, Outputs: final.includes('ROLLBACK') ? [] : outputs };
-          return {};
-        }
-        case 'DescribeStackEventsCommand':
-          return { StackEvents: events };
-        case 'DeleteChangeSetCommand':
-          return {};
-        case 'DeleteStackCommand':
-          stack = { ...stack, StackStatus: 'DELETE_COMPLETE' };
-          events = [event('DbVolume', 'DELETE_COMPLETE')];
-          return {};
-        case 'DescribeStackResourcesCommand':
-          return {
-            StackResources: [
-              { LogicalResourceId: 'DbInstance', ResourceType: 'AWS::EC2::Instance' },
-              { LogicalResourceId: 'DbVolume', ResourceType: 'AWS::EC2::Volume' },
-            ],
-          };
-        default:
-          throw new Error(`cfn simulado: ${name}`);
-      }
-    },
-  };
-  const ec2 = {
-    async send(command) {
-      const name = command.constructor.name;
-      const params = command.input;
-      calls.push({ name, params });
-      switch (name) {
-        case 'DescribeImagesCommand':
-          return {
-            Images: Object.entries(input.ami).map(([role, id]) => ({
-              ImageId: id,
-              State: 'available',
-              Tags: [{ Key: 'Role', Value: role === 'db' ? (scenario.roleTag ?? 'db') : role }],
-            })),
-          };
-        case 'DescribeVpcsCommand':
-          return { Vpcs: [{ VpcId: 'vpc-1', CidrBlock: '10.20.0.0/16' }] };
-        case 'DescribeInstancesCommand':
-          return {
-            Reservations: [
-              {
-                Instances: params.InstanceIds.map((id) => ({
-                  InstanceId: id,
-                  State: { Name: instances[id].state },
-                  PublicIpAddress: instances[id].state === 'running' ? instances[id].ip : undefined,
-                })),
-              },
-            ],
-          };
-        case 'StopInstancesCommand':
-          for (const id of params.InstanceIds) instances[id].state = 'stopped';
-          return {};
-        case 'StartInstancesCommand':
-          for (const id of params.InstanceIds) instances[id].state = 'running';
-          instances['i-f'].ip = '4.4.4.4';
-          return {};
-        default:
-          throw new Error(`ec2 simulado: ${name}`);
-      }
-    },
-  };
-  return { cfn, ec2, calls, setStack: (value) => (stack = value) };
-}
-
-function adapter(aws) {
+function adapter(aws, settings = {}) {
   return createCloudFormationAdapter({
     ...readConfig({ DATABASE_URL: 'postgresql://unused' }),
     CFN_POLL_MS: 10,
     cfnClient: aws.cfn,
     ec2Client: aws.ec2,
+    ...settings,
   });
 }
 
@@ -244,8 +113,8 @@ test('crear: change set CREATE, eventos, outputs con IP de EC2 y versiones', asy
   assert.match(create.TemplateBody, /AWSTemplateFormatVersion/);
   assert.ok(aws.calls.some((call) => call.name === 'ExecuteChangeSetCommand'));
   assert.equal(result.status, 'succeeded');
-  assert.equal(result.outputs.urls.frontend_health, 'http://3.3.3.3/healthz');
-  assert.equal(result.outputs.instance_ids.db, 'i-d');
+  assert.equal(result.outputs.urls.frontend_health, 'http://198.51.100.40/healthz');
+  assert.equal(result.outputs.instance_ids.db, 'i-33333333333333333');
   assert.equal(result.outputs.suspended, false);
   assert.deepEqual(
     result.resources.map((item) => `${item.type}:${item.role}`),
@@ -260,11 +129,7 @@ test('crear: change set CREATE, eventos, outputs con IP de EC2 y versiones', asy
 
 test('sin cambios no ejecuta el change set (reintento idempotente)', async () => {
   const aws = fakeAws({ existing: 'CREATE_COMPLETE', changes: [] });
-  aws.setStack({ StackId: 'arn:stack/demo/1', StackStatus: 'CREATE_COMPLETE', Outputs: [
-    { OutputKey: 'FrontendInstanceId', OutputValue: 'i-f' },
-    { OutputKey: 'BackendInstanceId', OutputValue: 'i-b' },
-    { OutputKey: 'DbInstanceId', OutputValue: 'i-d' },
-  ] });
+  aws.setStack({ StackId: aws.stackArn, StackStatus: 'CREATE_COMPLETE', Outputs: aws.outputs });
   const ctx = context();
   await adapter(aws).apply(ctx);
   assert.equal(aws.calls.find((call) => call.name === 'CreateChangeSetCommand').params.ChangeSetType, 'UPDATE');
@@ -313,7 +178,7 @@ test('suspender y reanudar usan la API de EC2 y recalculan la URL (D5)', async (
   assert.equal(suspended.outputs.urls.frontend, null);
   const resumed = await cfn.resume(context());
   assert.ok(aws.calls.some((call) => call.name === 'StartInstancesCommand'));
-  assert.equal(resumed.outputs.urls.frontend, 'http://4.4.4.4/');
+  assert.equal(resumed.outputs.urls.frontend, 'http://198.51.100.41/');
   assert.equal(resumed.outputs.suspended, false);
 });
 
@@ -332,4 +197,69 @@ test('rechaza AMIs sin la etiqueta Role correcta', async () => {
   const aws = fakeAws({ roleTag: 'backend' });
   await assert.rejects(adapter(aws).apply(context()), { code: 'IAC_INPUT' });
   assert.ok(!aws.calls.some((call) => call.name === 'CreateChangeSetCommand'));
+});
+
+test('espera el evento raíz de su request y descarta estados COMPLETE anteriores', async () => {
+  const aws = fakeAws({ existing: 'UPDATE_COMPLETE', executeResult: 'UPDATE_COMPLETE', staleStablePolls: 2,
+    changes: [{ ResourceChange: { Action: 'Modify', Replacement: 'False', LogicalResourceId: 'BackendInstance', ResourceType: 'AWS::EC2::Instance' } }],
+  });
+  await adapter(aws).apply(context());
+  assert.equal(aws.calls.filter((call) => call.name === 'DescribeStackEventsCommand').length, 3);
+  const execute = aws.calls.find((call) => call.name === 'ExecuteChangeSetCommand').params;
+  assert.match(execute.ClientRequestToken, /^[a-f0-9-]{36}$/);
+  assert.equal(execute.DisableRollback, false);
+});
+
+test('acota el sondeo de un change set que no termina', async () => {
+  const aws = fakeAws({ stuckChangeSet: true });
+  await assert.rejects(adapter(aws, { IAC_TIMEOUT_S: 0.1 }).apply(context()), { code: 'IAC_TIMEOUT' });
+  assert.ok(!aws.calls.some((call) => call.name === 'ExecuteChangeSetCommand'));
+});
+
+test('el deadline también aborta una petición SDK pendiente', async () => {
+  const aws = fakeAws();
+  aws.cfn.send = (_command, { abortSignal }) => new Promise((_resolve, reject) => {
+    abortSignal.addEventListener('abort', () => reject(abortSignal.reason), { once: true });
+  });
+  await assert.rejects(adapter(aws, { IAC_TIMEOUT_S: 0.1 }).destroy(context()), { code: 'IAC_TIMEOUT' });
+});
+
+test('no detiene EC2 mientras el stack todavía se está actualizando', async () => {
+  const aws = fakeAws({ existing: 'UPDATE_IN_PROGRESS' });
+  await assert.rejects(adapter(aws, { IAC_TIMEOUT_S: 0.1 }).suspend(context()), { code: 'IAC_TIMEOUT' });
+  assert.ok(!aws.calls.some((call) => call.name === 'StopInstancesCommand'));
+});
+
+test('cancelar deja de seguir el change set sin ordenar un borrado remoto', async () => {
+  const aws = fakeAws({ stuckChangeSet: true });
+  const controller = new AbortController();
+  const send = aws.cfn.send;
+  aws.cfn.send = async (command, options) => {
+    const result = await send(command, options);
+    if (command.constructor.name === 'DescribeChangeSetCommand') controller.abort(new OperationCancelled());
+    return result;
+  };
+  await assert.rejects(adapter(aws).apply({ ...context(), signal: controller.signal }), OperationCancelled);
+  assert.ok(!aws.calls.some((call) => ['DeleteStackCommand', 'ExecuteChangeSetCommand'].includes(call.name)));
+});
+
+test('la salida pública conserva identidad, SDK y hash del stack sin copiar campos privados', async () => {
+  const aws = fakeAws({ changes: [add('DbInstance')] });
+  const result = await adapter(aws).apply(context());
+  const snapshot = { input, backend: { type: 'cloudformation', region: input.region, stack_name: stackName(input) }, image_version: '0.2.2' };
+  const saved = publicDeployment({ ...result.outputs, password: 'PRIVATE_VALUE' }, result.tool_versions, snapshot);
+  assert.equal(saved.outputs.stack_id, aws.stackArn);
+  assert.equal(saved.outputs.stack_name, stackName(input));
+  assert.equal(saved.tool_versions.cloudformation, 'AWS (administrado)');
+  assert.equal(saved.tool_versions.aws_sdk, '3.1168.0');
+  assert.match(saved.tool_versions.template_sha256, /^[a-f0-9]{12}$/);
+  assert.ok(!JSON.stringify(saved).includes('PRIVATE_VALUE'));
+  assert.throws(() => publicDeployment({ ...result.outputs, stack_name: 'otro-tenant' }, result.tool_versions, snapshot), { code: 'DEPLOYMENT_OUTPUTS' });
+  assert.throws(() => publicDeployment({ ...result.outputs, stack_id: aws.stackArn.replace(input.region, 'us-east-1') }, result.tool_versions, snapshot), { code: 'DEPLOYMENT_OUTPUTS' });
+});
+
+test('una plantilla ausente se detecta en preflight antes de llamar a AWS', async () => {
+  const aws = fakeAws();
+  await assert.rejects(adapter(aws, { IAC_CFN_TEMPLATE: '/no-existe-plantilla-cfn.yaml' }).preflight(context()), { code: 'IAC_CONFIG' });
+  assert.deepEqual(aws.calls, []);
 });

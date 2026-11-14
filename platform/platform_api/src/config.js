@@ -50,7 +50,13 @@ const schema = z.object({
   IAC_CFN_TEMPLATE: z.string().trim().default(repoPath('infra/cloudformation/tenant.yaml')),
   CFN_POLL_MS: z.coerce.number().int().min(10).max(60000).default(10000),
   IAC_TIMEOUT_S: z.coerce.number().int().min(300).max(7200).default(3600),
-  HEALTH_TIMEOUT_S: z.coerce.number().int().min(30).max(3600).default(900),
+  HEALTH_TIMEOUT_S: z.coerce.number().int().min(1).max(3600).default(900),
+  HEALTH_SCRIPT: z.string().trim().min(1).default(repoPath('infra/health/tenant-health.sh')),
+  // Compatibilidad con los nombres de P6 ya usados en .env locales.
+  DEPLOYMENT_STATE_BUCKET: z.string().trim().default(''),
+  DEPLOYMENT_BASE_OUTPUTS_FILE: z.string().trim().optional(),
+  DEPLOYMENT_AMI_FILE: z.string().trim().optional(),
+  DEPLOYMENT_WORK_DIR: z.string().trim().optional(),
   TERRAFORM_BIN: z.string().trim().default('terraform'),
   TOFU_BIN: z.string().trim().default('tofu'),
   PYTHON_BIN: z
@@ -67,6 +73,21 @@ export function readConfig(env = process.env) {
     );
   }
   const config = result.data;
+  if (config.IAC_STATE_BUCKET && config.DEPLOYMENT_STATE_BUCKET &&
+      config.IAC_STATE_BUCKET !== config.DEPLOYMENT_STATE_BUCKET)
+    throw new Error('IAC_STATE_BUCKET y DEPLOYMENT_STATE_BUCKET deben referirse al mismo bucket.');
+  const aliases = [
+    ['IAC_STATE_BUCKET', 'DEPLOYMENT_STATE_BUCKET'],
+    ['IAC_BASE_OUTPUTS', 'DEPLOYMENT_BASE_OUTPUTS_FILE'],
+    ['IAC_AMI_IDS', 'DEPLOYMENT_AMI_FILE'],
+    ['IAC_RUNS_DIR', 'DEPLOYMENT_WORK_DIR'],
+  ];
+  for (const [canonical, legacy] of aliases) {
+    if (env[canonical] && env[legacy] && env[canonical] !== env[legacy])
+      throw new Error(`${canonical} y ${legacy} tienen valores distintos. Conserva una sola configuración.`);
+    config[canonical] = env[canonical] || env[legacy] || config[canonical];
+    config[legacy] = config[canonical];
+  }
   return {
     ...config,
     CLIENT_ORIGIN: new URL(config.CLIENT_ORIGIN).origin,

@@ -30,7 +30,7 @@ Cada argumento se pasa por separado con `shell:false`; no construir una cadena d
 
 `onLine` recibe líneas UTF-8 completas y filtradas; sus callbacks se serializan. La API existente las entrega por cursor y el frontend las consulta mientras sigue el proceso. No se agregó SSE: el polling existente sigue mostrando el progreso. El worker comprueba también `cancel_requested` en el heartbeat, cada cinco segundos, aunque no haya salida.
 
-En Linux/macOS, cancelar envía SIGTERM al grupo de procesos y luego SIGKILL tras el período de gracia; en Windows se usa `taskkill /T /F`. Espera además el cierre de las tuberías. Linux está probado; Windows queda pendiente de verificar por el equipo. Detener el proceso local no revierte lo ya creado en AWS ni cancela necesariamente una operación remota de SSM/CloudFormation. Tras una interrupción, revisar el estado y generar otro plan con el mismo backend. No borrar locks de operaciones activas ni crear otro estado para reintentar.
+En Linux/macOS, cancelar envía SIGTERM al grupo de procesos y luego SIGKILL tras el período de gracia; en Windows se usa `taskkill /T /F`. Espera además el cierre de las tuberías. Linux está probado; Windows queda pendiente de verificar por el equipo. Los adaptadores de P2 difieren la cancelación solicitada por el usuario durante apply hasta terminar ese paso; la pérdida de propiedad/apagado sí termina el proceso, con 60 s de gracia. Detener el proceso local no revierte lo ya creado en AWS ni cancela necesariamente una operación remota de SSM/CloudFormation. Tras una interrupción, revisar el estado y generar otro plan con el mismo backend. No borrar locks de operaciones activas ni crear otro estado para reintentar.
 
 ## Salida y secretos
 
@@ -75,7 +75,7 @@ Si ya existe un `SecureString`, lo conserva. Si existe un `String`/`StringList`,
 
 Permisos del operador/worker: `ssm:DescribeParameters` para metadatos, `ssm:PutParameter` y `ssm:AddTagsToResource` sobre su prefijo. Las EC2 mantienen sus permisos de lectura ya definidos por Terraform. El servicio no crea usuarios IAM ni modifica esas políticas.
 
-**Integración (P2):** el handler `create` (`src/modules/provisioning/provisioning.service.js`) llama a este servicio antes del primer apply, y el adaptador Terraform/OpenTofu (`src/engines/terraform.js`) usa `runCommand`. Registrar una institución y ejecutar el diagnóstico no escriben en SSM ni crean EC2. No se agregó una operación pública de prueba que cree secretos.
+El handler `create` ya llama a este servicio antes del primer apply. Los adaptadores de Terraform/OpenTofu de P2 están conectados: [contrato de integración](engines/README.md). Sin adaptador para el motor elegido, la API rechaza create antes de encolar o escribir secretos; registrar una institución y ejecutar el diagnóstico siguen sin escribir en SSM ni crear EC2.
 
 ## Pruebas locales
 
@@ -85,6 +85,8 @@ pnpm install
 pnpm test
 ```
 
-Las pruebas usan procesos ficticios, una conexión simulada para el worker y un cliente SSM simulado. No cargan `.env`, no consultan AWS ni modifican PostgreSQL. `pnpm test:runner` limita la ejecución a procesos y filtrado; `pnpm test:backups` conserva las pruebas de P3. No hay migraciones nuevas en este bloque.
+Las pruebas de `pnpm test` usan procesos ficticios, una conexión simulada para el worker y un cliente SSM simulado. No cargan `.env`, no consultan AWS ni modifican PostgreSQL. `pnpm test:runner` limita la ejecución a procesos y filtrado; `pnpm test:backups` conserva las pruebas de P3.
+
+La unión P2/P6 conserva las dos migraciones 003 y añade `004_unify_deployments.sql`. Hay una suite separada `pnpm test:integration`, con PostgreSQL local desechable y AWS simulado. Ver el contrato anterior antes de ejecutarla.
 
 Referencias: [procesos y grupos de Node.js](https://nodejs.org/api/child_process.html#optionsdetached), [credenciales del SDK de AWS](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html), [PutParameter](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html), [DescribeParameters](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DescribeParameters.html).

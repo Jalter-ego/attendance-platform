@@ -1,14 +1,14 @@
 // Operaciones de infraestructura del tenant (P2): create, suspend, resume y destroy.
 // El worker las toma de la cola de P6 (mismo bloqueo por tenant, eventos, cancelación y
 // reintento) y las ejecuta con el adaptador del motor elegido (src/engines).
-import { randomUUID } from 'node:crypto';
-import { transaction } from '../../db/pool.js';
-import { getAdapter, engineAvailable, ENGINES } from '../../engines/adapter.js';
-import { buildTenantInput } from '../../engines/tenant-input.js';
-import { waitForHealth } from '../../engines/health.js';
+import { engineAvailable, ENGINES } from '../../engines/adapter.js';
 import { HttpError } from '../../lib/errors.js';
-import { OperationError } from '../../worker/errors.js';
-import { ensureTenantSecrets } from '../../worker/services/tenant-secrets.js';
+import { OperationError, LeaseLost } from '../../worker/errors.js';
+import { validateSnapshot, publicDeployment } from '../deployments/deployment-config.js';
+import { saveDeployment } from '../deployments/deployments.service.js';
+import { getEngineAdapter } from '../../worker/engines/index.js';
+import { prepareDeploymentContext, ensureActive } from '../../worker/services/deployment-context.js';
+import { checkTenantHealth } from '../../worker/services/tenant-health.js';
 
 export const INFRA_OPERATIONS = ['create', 'suspend', 'resume', 'destroy'];
 
@@ -20,12 +20,6 @@ const ALLOWED_FROM = {
   suspend: ['ready', 'failed', 'suspending'],
   resume: ['suspended', 'failed', 'resuming'],
   destroy: ['draft', 'provisioning', 'ready', 'suspending', 'suspended', 'resuming', 'deleting', 'failed'],
-};
-const TRANSITION = {
-  create: { running: 'provisioning', done: 'ready' },
-  suspend: { running: 'suspending', done: 'suspended' },
-  resume: { running: 'resuming', done: 'ready' },
-  destroy: { running: 'deleting', done: 'deleted' },
 };
 const METHOD = { create: 'apply', suspend: 'suspend', resume: 'resume', destroy: 'destroy' };
 
@@ -53,104 +47,49 @@ export function assertCanEnqueue(tenant, type, params = {}) {
     );
 }
 
-async function setStatus(pool, tenantId, status) {
-  await pool.query('UPDATE tenants SET status = $2, updated_at = now() WHERE id = $1', [
-    tenantId,
-    status,
-  ]);
-}
-
-async function saveDeployment(pool, tenant, operation, result, input) {
-  await transaction(pool, async (client) => {
-    await client.query(
-      'INSERT INTO deployments(id, tenant_id, operation_id, engine, ami, outputs, resources, tool_versions, status, log_ref) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-      [
-        randomUUID(),
-        tenant.id,
-        operation.id,
-        tenant.engine,
-        input.ami,
-        result.outputs,
-        JSON.stringify(result.resources),
-        result.tool_versions,
-        result.status,
-        result.log_ref,
-      ],
-    );
-  });
-}
-
-/** Handler del worker para create/suspend/resume/destroy. */
-export async function runInfraOperation({ pool, config, operation, report, signal }) {
-  const { rows } = await pool.query(
-    'SELECT t.*, row_to_json(p) AS plan_row FROM tenants t JOIN plans p ON p.code = t.plan WHERE t.id = $1',
-    [operation.tenant_id],
-  );
-  if (!rows.length) throw new OperationError('TENANT_NOT_FOUND', 'La institución ya no existe.');
-  const tenant = rows[0];
+/** Handler de P2 para suspend/resume/destroy; create usa el handler común de P6.
+ * La finalización pertenece al worker: nunca cambiar el estado sin comprobar su dueño.
+ */
+export async function runInfraOperation({ pool, config, operation, workerId, report, signal, adapters, creationServices = {} }) {
+  if (!['suspend', 'resume', 'destroy'].includes(operation.type))
+    throw new OperationError('UNSUPPORTED_OPERATION', 'La operación no corresponde a este handler de infraestructura.');
+  const tenant = (await pool.query('SELECT * FROM tenants WHERE id=$1', [operation.tenant_id])).rows[0];
+  if (!tenant) throw new OperationError('TENANT_NOT_FOUND', 'La institución ya no existe.');
+  const snapshot = validateSnapshot(operation.params?.deployment, tenant);
+  const adapter = getEngineAdapter(tenant.engine, adapters);
   const type = operation.type;
-  const transition = TRANSITION[type];
-  await setStatus(pool, tenant.id, transition.running);
-  try {
-    const input = await buildTenantInput(config, tenant, tenant.plan_row, {
-      suspended: type === 'suspend',
-    });
-    const adapter = getAdapter(tenant.engine, config);
-    await report(
-      `${type} de ${tenant.tenant_id}/${tenant.env} con ${adapter.label}: plan ${tenant.plan}, AMIs ${input.image.version ?? 'sin versión'}.`,
-      { stage: 'Validando la solicitud', progress: 5 },
-    );
-    if (type === 'create') {
-      // Servicio SSM de P6: crea los SecureString que faltan y conserva los existentes.
-      // config.ssmClient solo existe en pruebas (cliente simulado).
-      const secrets = await ensureTenantSecrets(tenant, {
-        signal,
-        projectName: input.base.project_name,
-        client: config.ssmClient,
-      });
-      const names = (list) => list.map((name) => name.split('/').pop()).join(', ') || 'ninguno';
-      await report(
-        `Secretos en SSM (${secrets.ssm_prefix}/): creados [${names(secrets.created)}], reutilizados [${names(secrets.reused)}]. Los valores no se muestran.`,
-        { stage: 'Secretos del tenant listos', progress: 8 },
-      );
-    }
-    const ctx = { input, report, signal, logRef: `operations/${operation.id}` };
-    const result = await adapter[METHOD[type]](ctx);
-    if (type === 'create' || type === 'resume') {
-      const urls = result.outputs.urls ?? {};
-      await report('Esperando que frontend y backend respondan (cloud-init y Ansible).', {
-        stage: 'Comprobando la salud',
-        progress: 85,
-      });
-      await waitForHealth(
-        { frontend: urls.frontend_health, backend: urls.backend_health },
-        {
-          timeoutMs: config.HEALTH_TIMEOUT_S * 1000,
-          signal,
-          onWait: (pending, elapsed) =>
-            report(`Aún arrancando (${elapsed} s): ${pending.join(', ')}.`),
-        },
-      );
-      await report(`Tenant disponible en ${urls.frontend}.`, {
-        stage: 'Servicios respondiendo',
-        progress: 95,
-      });
-    }
-    if (type !== 'destroy') await saveDeployment(pool, tenant, operation, result, input);
-    await setStatus(pool, tenant.id, transition.done);
-    await report(
-      {
-        create: 'Tenant creado y verificado.',
-        suspend: 'Tenant suspendido: EC2 detenidas, discos y datos conservados.',
-        resume: 'Tenant reanudado con URLs actualizadas.',
-        destroy: 'Tenant eliminado. La red compartida y los buckets se conservan.',
-      }[type],
-      { stage: 'Completada', progress: 100 },
-    );
-    return result;
-  } catch (error) {
-    // El reintento vuelve a aplicar sobre el mismo estado: completa lo pendiente sin duplicar.
-    await setStatus(pool, tenant.id, 'failed').catch(() => {});
-    throw error;
+  const context = await prepareDeploymentContext({ config, tenant, snapshot, operation, report, signal });
+  context.input = { ...context.input, suspended: type === 'suspend' };
+  await adapter.preflight?.(context);
+  ensureActive(signal);
+  if (typeof adapter[METHOD[type]] !== 'function')
+    throw new OperationError('ENGINE_NOT_AVAILABLE', 'El motor no admite esta operación de infraestructura.');
+  const result = await adapter[METHOD[type]](context);
+  ensureActive(signal);
+  if (result?.status !== 'succeeded')
+    throw new OperationError('ENGINE_FAILED', 'El motor no pudo completar el cambio de infraestructura.');
+  if (type === 'destroy') {
+    await report('Recursos del tenant eliminados. La red compartida y los buckets se conservan.', { stage: 'Finalizando eliminación', progress: 95 });
+    return { status: 'succeeded' };
   }
+  const deployment = publicDeployment(result.outputs, result.tool_versions, snapshot, { suspended: type === 'suspend' });
+  const id = await saveDeployment(pool, operation, workerId, deployment);
+  if (type === 'resume') {
+    await report('Comprobando los accesos nuevos y la salud de Attendance.', { stage: 'Comprobando salud', progress: 85 });
+    const health = await (creationServices.checkHealth ?? checkTenantHealth)({
+      tenant: snapshot.input, url: deployment.outputs.urls.frontend, projectName: snapshot.input.base.project_name,
+      config, signal, report,
+    });
+    ensureActive(signal);
+    const saved = await pool.query(`UPDATE deployments SET health=$3 WHERE id=$1 AND operation_id=$2
+      AND EXISTS (SELECT 1 FROM operations WHERE id=$2 AND worker_id=$4 AND status='running')`,
+      [id, operation.id, health, workerId]);
+    if (!saved.rowCount) throw new LeaseLost();
+    if (health.status !== 'healthy')
+      throw new OperationError('TENANT_UNHEALTHY', 'Las EC2 arrancaron, pero Attendance todavía no está sano. Revisa y reintenta con el mismo estado.');
+  }
+  ensureActive(signal);
+  await report(type === 'suspend' ? 'EC2 detenidas; discos y datos conservados.' : 'Attendance responde en sus accesos actuales.',
+    { stage: 'Finalizando operación', progress: 95 });
+  return { deployment_id: id, urls: deployment.outputs.urls, instance_ids: deployment.outputs.instance_ids };
 }

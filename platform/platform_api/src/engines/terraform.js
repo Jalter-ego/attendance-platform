@@ -54,11 +54,11 @@ export function stateKey(input) {
   return `tenants/${input.tenant_id}/${input.env}/terraform.tfstate`;
 }
 
-export function backendConfig(input, config) {
+export function backendConfig(input, config, backend) {
   return [
-    `bucket       = ${JSON.stringify(config.IAC_STATE_BUCKET)}`,
-    `key          = ${JSON.stringify(stateKey(input))}`,
-    `region       = ${JSON.stringify(input.base.region)}`,
+    `bucket       = ${JSON.stringify(backend?.bucket ?? config.IAC_STATE_BUCKET)}`,
+    `key          = ${JSON.stringify(backend?.key ?? stateKey(input))}`,
+    `region       = ${JSON.stringify(backend?.region ?? input.base.region)}`,
     'encrypt      = true',
     'use_lockfile = true',
     '',
@@ -95,8 +95,8 @@ export function createTerraformAdapter(config, engine) {
   const { command, prefix } = resolveCommand(bin);
   const timeoutMs = config.IAC_TIMEOUT_S * 1000;
 
-  function paths(input) {
-    const runDir = join(config.IAC_RUNS_DIR, input.tenant_id, input.env);
+  function paths(ctx) {
+    const runDir = ctx.directory ?? join(config.IAC_RUNS_DIR, ctx.input.tenant_id, ctx.input.env);
     return {
       runDir,
       moduleDir: join(runDir, 'module'),
@@ -113,6 +113,10 @@ export function createTerraformAdapter(config, engine) {
       TF_INPUT: '0',
       CHECKPOINT_DISABLE: '1',
       TF_PLUGIN_CACHE_DIR: p.cacheDir,
+      TF_WORKSPACE: 'default',
+      TF_DATA_DIR: join(p.moduleDir, '.terraform'),
+      ...Object.fromEntries(Object.keys(process.env)
+        .filter((key) => key.startsWith('TF_CLI_ARGS')).map((key) => [key, undefined])),
     };
     // plan_preview.py invoca "terraform"/"tofu" por nombre: se antepone la carpeta del binario.
     if (isAbsolute(bin) && !prefix.length)
@@ -125,22 +129,24 @@ export function createTerraformAdapter(config, engine) {
   // Terraform y OpenTofu comparten el mismo lockfile versionado.
   async function prepare(ctx) {
     const { input } = ctx;
-    if (!config.IAC_STATE_BUCKET)
+    if (!(ctx.backend?.bucket ?? config.IAC_STATE_BUCKET))
       throw new OperationError(
         'IAC_CONFIG',
         'Configura IAC_STATE_BUCKET (bucket del estado creado en infra/bootstrap) en el .env del worker.',
       );
-    if (!(await exists(config.IAC_CLOUD_INIT_TEMPLATE)))
+    const template = ctx.cloudInitTemplatePath ?? config.IAC_CLOUD_INIT_TEMPLATE;
+    const moduleDir = ctx.moduleDirectory ?? config.IAC_MODULE_DIR;
+    if (!(await exists(template)))
       throw new OperationError(
         'IAC_CONFIG',
         'No se encontró la plantilla cloud-init. Revisa IAC_CLOUD_INIT_TEMPLATE.',
       );
-    const p = paths(input);
-    await mkdir(p.moduleDir, { recursive: true });
+    const p = paths(ctx);
+    await mkdir(p.moduleDir, { recursive: true, mode: 0o700 });
     await mkdir(p.cacheDir, { recursive: true });
     let sources = [];
     try {
-      sources = (await readdir(config.IAC_MODULE_DIR)).filter((file) => file.endsWith('.tf'));
+      sources = (await readdir(moduleDir)).filter((file) => file.endsWith('.tf'));
     } catch {
       /* se informa abajo */
     }
@@ -150,11 +156,11 @@ export function createTerraformAdapter(config, engine) {
       if (file.endsWith('.tf') && !sources.includes(file))
         await rm(join(p.moduleDir, file));
     for (const file of sources)
-      await copyFile(join(config.IAC_MODULE_DIR, file), join(p.moduleDir, file));
-    const lock = join(config.IAC_MODULE_DIR, '.terraform.lock.hcl');
+      await copyFile(join(moduleDir, file), join(p.moduleDir, file));
+    const lock = join(moduleDir, '.terraform.lock.hcl');
     if (await exists(lock)) await copyFile(lock, join(p.moduleDir, '.terraform.lock.hcl'));
-    await writeFile(p.varFile, `${JSON.stringify(moduleVariables(input, config), null, 2)}\n`);
-    await writeFile(p.backendFile, backendConfig(input, config));
+    await writeFile(p.varFile, `${JSON.stringify(moduleVariables(input, { ...config, IAC_CLOUD_INIT_TEMPLATE: template }), null, 2)}\n`, { mode: 0o600 });
+    await writeFile(p.backendFile, backendConfig(input, config, ctx.backend), { mode: 0o600 });
     return p;
   }
 
@@ -379,6 +385,11 @@ export function createTerraformAdapter(config, engine) {
   return {
     engine,
     label,
+    async preflight(ctx) {
+      const p = await prepare(ctx);
+      // version no inicializa el backend ni habla con AWS. Detecta el CLI antes de SSM.
+      await cli(ctx, p, ['version', '-json'], { capture: true });
+    },
     async versions(ctx) {
       const p = await prepare(ctx);
       await init(ctx, p);

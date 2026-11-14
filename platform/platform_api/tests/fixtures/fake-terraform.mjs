@@ -8,7 +8,8 @@ const mode = process.env.FAKE_TF_MODE ?? 'ok';
 const chdir = args.find((arg) => arg.startsWith('-chdir='))?.slice(7);
 const command = args.find((arg) => !arg.startsWith('-'));
 if (process.env.FAKE_TF_LOG)
-  appendFileSync(process.env.FAKE_TF_LOG, `${JSON.stringify({ command, args, chdir })}\n`);
+  appendFileSync(process.env.FAKE_TF_LOG, `${JSON.stringify({ command, args, chdir,
+    workspace: process.env.TF_WORKSPACE, extraPlanArgs: process.env.TF_CLI_ARGS_plan })}\n`);
 
 const health = process.env.FAKE_HEALTH_BASE ?? 'http://127.0.0.1:9';
 switch (command) {
@@ -73,9 +74,9 @@ switch (command) {
           },
           sensitive: false,
         },
-        instance_ids: { value: { frontend: 'i-f', backend: 'i-b', db: 'i-d' }, sensitive: false },
+        instance_ids: { value: { frontend: 'i-11111111111111111', backend: 'i-22222222222222222', db: 'i-33333333333333333' }, sensitive: false },
         private_ips: { value: { frontend: '10.0.1.10', backend: '10.0.2.10', db: '10.0.2.20' }, sensitive: false },
-        db_volume_id: { value: 'vol-1', sensitive: false },
+        db_volume_id: { value: 'vol-44444444444444444', sensitive: false },
         suspended: { value: false, sensitive: false },
         secret_thing: { value: 'no-debe-aparecer', sensitive: true },
       }),

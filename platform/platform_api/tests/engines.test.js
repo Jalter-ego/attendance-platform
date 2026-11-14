@@ -207,7 +207,7 @@ test(
 
       assert.equal(result.status, 'succeeded');
       assert.equal(result.log_ref, 'operations/test');
-      assert.equal(result.outputs.instance_ids.db, 'i-d');
+      assert.equal(result.outputs.instance_ids.db, 'i-33333333333333333');
       assert.equal(result.outputs.secret_thing, undefined);
       assert.deepEqual(
         result.resources.map((resource) => `${resource.type}:${resource.role}`),

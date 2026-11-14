@@ -7,7 +7,7 @@
 // - Progreso: los eventos del stack se registran como eventos de la operación.
 // - Suspender/reanudar (D5): CloudFormation no detiene instancias de forma declarativa;
 //   el adaptador usa la API de EC2 sobre las instancias del stack y conserva los discos.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
@@ -71,8 +71,8 @@ export function bootIdentity(input, vpcCidr) {
     admin_email: input.contact_email,
     limits: input.limits ?? {},
     backup_bucket: backups,
-    backup_schedule: input.backup.schedule,
-    backup_retention_days: input.backup.retention_days,
+    backup_schedule: input.backup?.schedule ?? '',
+    backup_retention_days: input.backup?.retention_days ?? 0,
   }).slice(1, -1);
 }
 
@@ -151,6 +151,23 @@ function outputsMap(stack) {
 export function createCloudFormationAdapter(config) {
   const pollMs = config.CFN_POLL_MS;
 
+  async function bounded(ctx, operation) {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new OperationError(
+      'IAC_TIMEOUT', 'CloudFormation alcanzó el tiempo máximo. Revisa el stack en AWS antes de reintentar; la operación remota puede continuar.',
+    )), config.IAC_TIMEOUT_S * 1000);
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, deadline.signal]) : deadline.signal;
+    try {
+      signal.throwIfAborted();
+      return await operation({ ...ctx, signal });
+    } catch (error) {
+      if (signal.aborted) throw signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // config.cfnClient / config.ec2Client solo existen en pruebas (clientes simulados).
   function clients(input) {
     const options = { region: input.base.region, maxAttempts: 3 };
@@ -202,22 +219,30 @@ export function createCloudFormationAdapter(config) {
   }
 
   // Sigue los eventos del stack hasta un estado final. Devuelve el stack final.
-  async function follow(ctx, cfn, stackId, since, { progressFrom = 50, progressTo = 78 } = {}) {
+  async function follow(ctx, cfn, stackId, token, { progressFrom = 50, progressTo = 78 } = {}) {
     const seen = new Set();
     const failures = [];
     let progress = progressFrom;
+    let terminal;
     for (;;) {
       await wait(ctx);
-      const { StackEvents = [] } = await send(
-        ctx,
-        cfn,
-        new DescribeStackEventsCommand({ StackName: stackId }),
-      );
-      const fresh = StackEvents.filter(
-        (event) => new Date(event.Timestamp) >= since && !seen.has(event.EventId),
-      ).reverse();
+      const fresh = [];
+      let next;
+      do {
+        const page = await send(ctx, cfn, new DescribeStackEventsCommand({ StackName: stackId, NextToken: next }));
+        const events = page.StackEvents ?? [];
+        fresh.push(...events.filter((event) => event.ClientRequestToken === token && !seen.has(event.EventId)));
+        next = page.NextToken;
+        // Las páginas van de nuevas a antiguas. Al alcanzar eventos ya vistos no hace
+        // falta recorrer todo el historial del stack en cada sondeo.
+        if (events.some((event) => seen.has(event.EventId))) next = undefined;
+      } while (next);
+      fresh.reverse();
       for (const event of fresh) {
         seen.add(event.EventId);
+        if (event.ResourceType === 'AWS::CloudFormation::Stack' && event.LogicalResourceId === stackName(ctx.input) &&
+            (SUCCESS.has(event.ResourceStatus) || FAILED.has(event.ResourceStatus)))
+          terminal = event.ResourceStatus;
         const reason = event.ResourceStatusReason ? ` — ${event.ResourceStatusReason}` : '';
         if (/_FAILED$/.test(event.ResourceStatus) && !/cancel/i.test(reason))
           failures.push(`${event.LogicalResourceId}: ${event.ResourceStatusReason ?? event.ResourceStatus}`);
@@ -228,13 +253,15 @@ export function createCloudFormationAdapter(config) {
         });
       }
       const stack = await getStack(ctx, cfn, stackId);
-      const status = stack?.StackStatus ?? 'DELETE_COMPLETE';
-      if (SUCCESS.has(status)) return stack;
-      if (FAILED.has(status))
+      // Un estado COMPLETE anterior puede seguir visible inmediatamente después del
+      // request. Solo terminar con el evento raíz del token de ESTA operación.
+      if (terminal && SUCCESS.has(terminal) &&
+          (stack?.StackStatus === terminal || (!stack && terminal === 'DELETE_COMPLETE'))) return stack;
+      if (terminal && FAILED.has(terminal))
         throw new OperationError(
           'ENGINE_FAILED',
           explainEngineError(
-            [`Error: ${failures[0] ?? `el stack terminó en ${status}`}`],
+            [`Error: ${failures[0] ?? `el stack terminó en ${terminal}`}`],
             LABEL,
           ),
         );
@@ -407,9 +434,9 @@ export function createCloudFormationAdapter(config) {
           stage: 'Limpiando el intento anterior',
           progress: 20,
         });
-        const since = new Date(Date.now() - 1000);
-        await send(ctx, aws.cfn, new DeleteStackCommand({ StackName: stack.StackId }));
-        await follow(ctx, aws.cfn, stack.StackId, since, { progressFrom: 20, progressTo: 28 });
+        const token = randomUUID();
+        await send(ctx, aws.cfn, new DeleteStackCommand({ StackName: stack.StackId, ClientRequestToken: token }));
+        await follow(ctx, aws.cfn, stack.StackId, token, { progressFrom: 20, progressTo: 28 });
         stack = null;
       }
       const type = !stack || stack.StackStatus === 'REVIEW_IN_PROGRESS' ? 'CREATE' : 'UPDATE';
@@ -441,13 +468,14 @@ export function createCloudFormationAdapter(config) {
           stage: 'Aplicando cambios',
           progress: 50,
         });
-        const since = new Date(Date.now() - 1000);
+        const token = randomUUID();
         await send(
           ctx,
           aws.cfn,
-          new ExecuteChangeSetCommand({ StackName: stackName(input), ChangeSetName: plan.name }),
+          new ExecuteChangeSetCommand({ StackName: stackName(input), ChangeSetName: plan.name,
+            ClientRequestToken: token, DisableRollback: false }),
         );
-        stack = await follow(ctx, aws.cfn, stackName(input), since);
+        stack = await follow(ctx, aws.cfn, stackName(input), token);
       }
       stack = await getStack(ctx, aws.cfn, stackName(input));
       const outputs = await currentOutputs(ctx, aws.ec2, input, stack);
@@ -468,7 +496,7 @@ export function createCloudFormationAdapter(config) {
         { stage: state === 'stopped' ? 'Deteniendo servidores' : 'Arrancando servidores', progress: 20 },
       );
       const toolVersions = await versions(ctx);
-      const stack = await getStack(ctx, aws.cfn, stackName(input));
+      const stack = await waitStable(ctx, aws.cfn, await getStack(ctx, aws.cfn, stackName(input)));
       if (!stack) throw new OperationError('ENGINE_FAILED', 'El stack del tenant no existe. Créalo primero.');
       const ids = Object.values((await currentOutputs(ctx, aws.ec2, input, stack)).instance_ids);
       await send(
@@ -506,9 +534,9 @@ export function createCloudFormationAdapter(config) {
       const toolVersions = await versions(ctx);
       const stack = await waitStable(ctx, aws.cfn, await getStack(ctx, aws.cfn, stackName(input)));
       if (stack) {
-        const since = new Date(Date.now() - 1000);
-        await send(ctx, aws.cfn, new DeleteStackCommand({ StackName: stack.StackId }));
-        await follow(ctx, aws.cfn, stack.StackId, since, { progressFrom: 30, progressTo: 78 });
+        const token = randomUUID();
+        await send(ctx, aws.cfn, new DeleteStackCommand({ StackName: stack.StackId, ClientRequestToken: token }));
+        await follow(ctx, aws.cfn, stack.StackId, token, { progressFrom: 30, progressTo: 78 });
       } else await ctx.report('El stack ya no existía.');
       await ctx.report('Recursos del tenant eliminados.', { stage: 'Recursos eliminados', progress: 80 });
       return engineResult({ outputs: {}, toolVersions, logRef: ctx.logRef });
@@ -550,20 +578,25 @@ export function createCloudFormationAdapter(config) {
     engine: 'cloudformation',
     label: LABEL,
     versions,
-    preview,
-    apply,
-    suspend: (ctx) => power(ctx, 'stopped'),
-    resume: (ctx) => power(ctx, 'running'),
-    destroy,
-    async outputs(ctx) {
-      const aws = clients(ctx.input);
+    async preflight(ctx) {
+      ctx.signal?.throwIfAborted();
+      try { await readFile(config.IAC_CFN_TEMPLATE, 'utf8'); }
+      catch { throw new OperationError('IAC_CONFIG', 'No se pudo leer la plantilla CloudFormation. Revisa IAC_CFN_TEMPLATE.'); }
+    },
+    preview: (ctx, options) => bounded(ctx, (active) => preview(active, options)),
+    apply: (ctx) => bounded(ctx, apply),
+    suspend: (ctx) => bounded(ctx, (active) => power(active, 'stopped')),
+    resume: (ctx) => bounded(ctx, (active) => power(active, 'running')),
+    destroy: (ctx) => bounded(ctx, destroy),
+    outputs: (ctx) => bounded(ctx, async (active) => {
+      const aws = clients(active.input);
       try {
-        const stack = await getStack(ctx, aws.cfn, stackName(ctx.input));
+        const stack = await getStack(active, aws.cfn, stackName(active.input));
         if (!stack) throw new OperationError('ENGINE_FAILED', 'El stack del tenant no existe.');
-        return currentOutputs(ctx, aws.ec2, ctx.input, stack);
+        return await currentOutputs(active, aws.ec2, active.input, stack);
       } finally {
         aws.close();
       }
-    },
+    }),
   };
 }
