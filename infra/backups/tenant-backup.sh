@@ -65,7 +65,7 @@ run_on_db() {
   cmd_id=$(aws ssm send-command --instance-ids "$instance" --document-name AWS-RunShellScript \
     --comment "$comment" --timeout-seconds 60 \
     --parameters "{\"commands\":[\"$command\"],\"executionTimeout\":[\"$TIMEOUT\"]}" \
-    --query Command.CommandId --output text) || die "SSM no aceptó el comando (¿agente registrado? ver docs/respaldos.md)"
+    --query Command.CommandId --output text) || die "SSM no aceptó el comando (¿agente registrado? ver docs/manual/p3-respaldos.md)"
   echo "== SSM $cmd_id en $instance: $command"
   while :; do
     status=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance" \
