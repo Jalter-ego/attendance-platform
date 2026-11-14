@@ -97,7 +97,7 @@ export async function runInfraOperation({ pool, config, operation, report, signa
     });
     const adapter = getAdapter(tenant.engine, config);
     await report(
-      `${type} de ${tenant.tenant_id}/${tenant.env} con ${adapter.label}: plan ${tenant.plan}, AMIs ${input.image.version ?? 'sin versión'}.`,
+      `${type} de ${tenant.tenant_id}/${tenant.env} con ${adapter.label}: plan ${tenant.plan}${input.plan_version ? ` v${input.plan_version}` : ''}, AMIs ${input.image.version ?? 'sin versión'}.`,
       { stage: 'Validando la solicitud', progress: 5 },
     );
     if (type === 'create') {

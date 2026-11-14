@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError } from '../../lib/errors.js';
+import { planCode } from '../plans/plans.service.js';
 
 export const uuid = z.uuid();
 export const tenantInput = z
@@ -13,7 +14,8 @@ export const tenantInput = z
       ),
     name: z.string().trim().min(1).max(150),
     env: z.enum(['test', 'prod']).default('test'),
-    plan: z.enum(['basic', 'standard', 'advanced']),
+    // P4: cualquier plan del catálogo (tabla plans), no solo los 3 de la semilla.
+    plan: planCode,
     engine: z.enum(['terraform', 'tofu', 'pulumi', 'cloudformation']),
     contact_email: z
       .email()
@@ -54,7 +56,7 @@ const filters = z.object({
     ])
     .optional(),
   env: z.enum(['test', 'prod']).optional(),
-  plan: z.enum(['basic', 'standard', 'advanced']).optional(),
+  plan: planCode.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -106,6 +108,10 @@ export async function getTenant(pool, user, id) {
 
 export async function registerTenant(pool, input) {
   const tenant = tenantInput.parse(input);
+  const plan = await pool.query('SELECT 1 FROM plans WHERE code = $1', [tenant.plan]);
+  if (!plan.rowCount)
+    throw new HttpError(400, 'PLAN_NOT_FOUND', `El plan "${tenant.plan}" no existe en el catálogo.`);
+  // plan_snapshot lo completa el trigger de la migración 004 con el plan vigente.
   const result = await pool.query(
     'INSERT INTO tenants(id, tenant_id, name, env, plan, engine, contact_email, timezone, region) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
     [

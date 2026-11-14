@@ -23,7 +23,13 @@ import {
 } from './modules/operations/operations.service.js';
 import { listBackups } from './modules/backups/backups.service.js';
 import { ENGINES } from './engines/adapter.js';
-import { BACKUP_BY_PLAN } from './engines/tenant-input.js';
+import {
+  createPlan,
+  deletePlan,
+  getPlan,
+  listPlans,
+  updatePlan,
+} from './modules/plans/plans.service.js';
 
 export function createApp({ pool, config }) {
   const app = express();
@@ -43,7 +49,7 @@ export function createApp({ pool, config }) {
     }
     if (request.method === 'OPTIONS') {
       response.set('Access-Control-Allow-Headers', 'Content-Type');
-      response.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      response.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
       return response.sendStatus(204);
     }
     if (
@@ -107,19 +113,25 @@ export function createApp({ pool, config }) {
     ]);
     response.clearCookie('platform_session', cookie).sendStatus(204);
   });
+  // P4: catálogo de planes (F2). Leer: cualquier sesión (el wizard lo usa). Escribir: admin.
   api.get('/plans', async (_request, response) =>
-    response.json({
-      items: (
-        await pool.query(
-          "SELECT * FROM plans ORDER BY (sizing->>'db_disk_gb')::int",
-        )
-      ).rows.map((plan) => ({
-        ...plan,
-        // P2: respaldo que aplica el motor según el plan (variable "backup" del módulo).
-        backup: BACKUP_BY_PLAN[plan.code] ?? null,
-      })),
-    }),
+    response.json(await listPlans(pool)),
   );
+  api.post('/plans', requireAdmin, async (request, response) =>
+    response.status(201).json(await createPlan(pool, request.user, request.body)),
+  );
+  api.get('/plans/:code', requireAdmin, async (request, response) =>
+    response.json(await getPlan(pool, request.params.code)),
+  );
+  api.put('/plans/:code', requireAdmin, async (request, response) =>
+    response.json(
+      await updatePlan(pool, request.user, request.params.code, request.body),
+    ),
+  );
+  api.delete('/plans/:code', requireAdmin, async (request, response) => {
+    await deletePlan(pool, request.params.code);
+    response.sendStatus(204);
+  });
   // P2: motores del selector del wizard y si ya tienen adaptador conectado al worker.
   api.get('/engines', (_request, response) =>
     response.json({
