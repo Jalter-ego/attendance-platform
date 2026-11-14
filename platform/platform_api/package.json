@@ -16,7 +16,8 @@
     "admin:create": "node --env-file-if-exists=.env scripts/create-admin.js",
     "test": "node --test tests/*.test.js",
     "test:runner": "node --test tests/command-runner.test.js tests/redact.test.js",
-    "test:backups": "node --test tests/backups.test.js"
+    "test:backups": "node --test tests/backups.test.js",
+    "test:engines": "node --test tests/engines.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-ssm": "3.1168.0",

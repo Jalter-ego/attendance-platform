@@ -8,7 +8,7 @@ Los commits y PRs llevan el autor real.
 | Rol | Integrante | Eje (herramienta de la materia) | Pantallas | Suplente |
 | --- | --- | --- | --- | --- |
 | P1 | _por completar_ | Terraform base y módulo tenant | _por completar_ | P2 |
-| P2 | _por completar_ | Motores IaC (Tofu, Pulumi, CloudFormation) | _por completar_ | P1 |
+| P2 | GitHub `Arlin-Ab` | **Motores IaC: EngineAdapter, Terraform/OpenTofu, Pulumi, CloudFormation** | Crear tenant (wizard), panel Infraestructura | P1 |
 | P3 | jorge (GitHub `Gatu-1548`) | **Packer · cloud-init · Respaldos** | Respaldos | P4 |
 | P4 | _por completar_ | Ansible · app del tenant · planes | _por completar_ | P3 |
 | P5 | _por completar_ | Observabilidad · escáneres de seguridad | Inicio, Monitoreo, Seguridad | P6 |
@@ -18,7 +18,43 @@ Los commits y PRs llevan el autor real.
 
 ## P1 — _por completar_
 
-## P2 — _por completar_
+## P2 — Motores IaC · Adaptador multi-motor · Wizard (GitHub `Arlin-Ab`)
+
+**Tareas del plan:** D1–D7, A6 (con P1), J1 (con P1) y el wizard Crear tenant. Avance en curso: esta sección se actualiza con cada PR.
+
+### Qué hice
+
+| Tarea | Resultado |
+| --- | --- |
+| **D1** Interfaz `EngineAdapter` | `platform/platform_api/src/engines/adapter.js`: `versions`, `preview`, `apply`, `suspend`, `resume`, `destroy`, `outputs`, con el resultado común del contrato `{status, resources, outputs, tool_versions, log_ref}`. El worker solo habla con esta interfaz. |
+| **D2** Adaptadores Terraform y OpenTofu | `src/engines/terraform.js` ejecuta el módulo `infra/terraform/tenant` de P1. Usa un directorio por tenant con copia del módulo, `.terraform/` y lockfile propios, backend S3 `tenants/<id>/<env>/terraform.tfstate` con `use_lockfile` y el flujo `init → plan → revisión → apply → output`. Si el plan borraría el disco de datos fuera de un `destroy`, se detiene. |
+| Conexión al worker | `src/modules/provisioning/`: operaciones `create`, `suspend`, `resume` y `destroy` en la cola de P6 (migración `003_engines.sql`), con estados del tenant, health checks después del apply, reintento sin duplicar (RF-12) y confirmación al eliminar (RF-18). |
+| Errores comprensibles (RF-11) | Los comandos corren con el ejecutor común de P6 (`worker/services/command-runner.js`). `src/engines/errors.js` traduce los errores conocidos (bloqueo, credenciales, cuota de vCPU, AMIs, permisos, bucket) a partir de stderr. Cancelar desde la UI no corta un `apply` a medias; perder la operación sí lo detiene. |
+| Secretos | El handler `create` llama al servicio SSM de P6 (`worker/services/tenant-secrets.js`) antes del primer apply; los eventos solo muestran nombres. |
+| **D7** Registro de versiones (RF-13) | Cada despliegue guarda en `deployments` el motor y su versión, el proveedor AWS, la versión y el commit de las AMIs, el commit de las plantillas, las AMIs, los recursos y los outputs. Se ve en el panel **Infraestructura** del detalle del tenant. |
+
+### Cómo lo verifiqué
+
+- `pnpm test:engines`: 15 pruebas sin AWS, con terraform simulado (`tests/fixtures/fake-terraform.mjs`). Cubren la entrada común, el directorio y backend por tenant, el resultado y las versiones, la suspensión, el reintento sin cambios, los errores legibles, la cancelación y la pérdida de la operación durante el apply, y los health checks. Junto con las de P3/P6: 48 pruebas, 0 fallos.
+- Flujo completo contra PostgreSQL 16 real con las migraciones 001–003:
+  - un `create` que falla, queda `failed`, se reintenta y termina `ready`;
+  - `suspend` → `suspended`, `resume` → `ready`;
+  - tres `deployments` con versiones;
+  - `destroy` rechazado sin confirmación y aceptado con ella.
+- Terraform 1.16.6 real (sin AWS) acepta las variables que genera el adaptador con el módulo copiado (`validate` y `console`), incluida la plantilla cloud-init por ruta absoluta.
+- `pnpm lint` y `pnpm build` del frontend.
+
+Pendiente de probar en AWS: crear un tenant real desde la plataforma (requiere `IAC_STATE_BUCKET` y los outputs de la base) y OpenTofu con el CLI instalado.
+
+### Pendiente
+
+Wizard de 3 pasos (RF-03/07), Pulumi (D3), CloudFormation (D4/D5), comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1).
+
+### Qué defiendo en el video
+
+1. `EngineAdapter`: el worker no depende del motor; agregar Pulumi o CloudFormation es implementar la misma interfaz.
+2. Por qué hay un directorio y un estado por tenant, y cómo un reintento completa lo pendiente sin duplicar recursos.
+3. Cómo se integra con el ejecutor y el servicio SSM de P6 (secretos fuera del IaC, logs filtrados) y cómo se registran las versiones de cada despliegue.
 
 ## P3 — Packer · cloud-init · Respaldos jorge
 

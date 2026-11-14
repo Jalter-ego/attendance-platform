@@ -11,6 +11,13 @@ export const operationsService = {
     ),
   diagnostic: (tenantId: string) =>
     post<Operation>(`/tenants/${tenantId}/operations`, { type: 'diagnostic' }),
+  // P2: infraestructura con el motor del tenant (create/suspend/resume/destroy).
+  infra: (
+    tenantId: string,
+    body:
+      | { type: 'create' | 'suspend' | 'resume' }
+      | { type: 'destroy'; confirm: string },
+  ) => post<Operation>(`/tenants/${tenantId}/operations`, body),
   cancel: (id: string) => post<Operation>(`/operations/${id}/cancel`),
   retry: (id: string) => post<Operation>(`/operations/${id}/retry`),
 };

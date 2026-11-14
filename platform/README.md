@@ -98,6 +98,8 @@ platform_api/
   src/modules/tenants/       Registro, filtros y detalle
   src/modules/operations/    Cola, consultas y eventos
   src/worker/                Proceso que reclama y ejecuta trabajos
+  src/engines/               EngineAdapter, Terraform/OpenTofu, secretos SSM y health checks (P2)
+  src/modules/provisioning/  Operaciones create/suspend/resume/destroy del worker (P2)
   src/db/                    Conexiones y transacciones
   src/lib/                   Errores, contraseñas y redacción de logs
 platform_web/src/
@@ -109,12 +111,12 @@ platform_web/src/
   lib/                       Cliente HTTP
 ```
 
-- **P2:** integrar su wizard sobre el registro inicial y conectar los adaptadores al worker. Registrar no equivale a aprovisionar. Mantener el bloqueo por tenant y usar su `tenant_id` + `env` para localizar el estado de IaC.
-- **P1:** integrar suspensión/reanudación, vista previa y confirmación de eliminación cuando exista el ejecutor real.
+- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Pendiente: wizard de 3 pasos, Pulumi y CloudFormation. Registrar no equivale a aprovisionar.
+- **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
 - **P3/P4/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`. El catálogo inicial se consulta desde la API; P4 puede ampliarlo mediante nuevas migraciones y sus endpoints.
-- **P6:** conectar el ejecutor y el servicio SSM al flujo de creación de P2; completar health checks y persistencia de deployments/outputs/versiones.
+- **P6:** el ejecutor común y el servicio SSM ya están conectados al flujo de creación de P2 (`src/modules/provisioning/`), junto con los health checks y la persistencia de deployments/outputs/versiones.
 
-H4/H5 ya tienen un [ejecutor común de procesos](platform_api/src/worker/README.md), integrado a los respaldos: progreso filtrado, timeout, cancelación del árbol de procesos y errores legibles. La cancelación se detecta también mientras el comando permanece en silencio. Hay además un servicio SSM que prepara los tres secretos por tenant y conserva los existentes al reintentar. P2 debe conectar ambos al handler de creación; aún faltan los motores, health checks y guardar los outputs/versiones del despliegue. No hay migraciones nuevas en este bloque.
+H4/H5 ya tienen un [ejecutor común de procesos](platform_api/src/worker/README.md), integrado a los respaldos y a los motores IaC: progreso filtrado, timeout, cancelación del árbol de procesos y errores legibles. La cancelación se detecta también mientras el comando permanece en silencio. El servicio SSM prepara los tres secretos por tenant y conserva los existentes al reintentar.
 
 Las tablas iniciales son `users`, `sessions`, `plans`, `tenants`, `operations`, `operation_events` y `deployments`. Las contraseñas se guardan con scrypt; en sesiones solo se conserva el hash del token. No hay registro público de usuarios. Se contempla `tenant_admin` para lectura limitada a su institución; falta su pantalla/flujo de alta. Auditoría, alertas y escáneres se integrarán en sus bloques respectivos. RF-04/05/06/15/19/20 siguen siendo opcionales.
 
@@ -133,7 +135,7 @@ Prefijo: `/api/v1`. Los cuerpos son JSON y la autenticación usa la cookie HttpO
 | `POST /tenants` | Registrar institución, sin desplegar | Administrador de plataforma |
 | `GET /tenants/:id` | Datos, últimas 20 operaciones y 10 despliegues | Sesión, filtrado por permisos |
 | `GET /tenants/:id/backups` | Respaldos del tenant (dumps S3 + snapshots EBS), consultados en AWS al momento | Sesión, filtrado por permisos |
-| `POST /tenants/:id/operations` | `{type:"diagnostic"}`, `{type:"backup"}` o `{type:"restore",backup_id:"<id>|latest"}`; devuelve `202` | Administrador de plataforma |
+| `POST /tenants/:id/operations` | `{type:"diagnostic"}`, `{type:"backup"}`, `{type:"restore",backup_id:"<id>|latest"}`, `{type:"create"}`, `{type:"suspend"}`, `{type:"resume"}` o `{type:"destroy",confirm:"<tenant_id>"}`; devuelve `202` | Administrador de plataforma |
 | `GET /operations/:id` | Estado, etapa y porcentaje | Sesión, filtrado por permisos |
 | `GET /operations/:id/logs?after=0` | Eventos por cursor | Sesión, filtrado por permisos |
 | `POST /operations/:id/cancel` | Cancelar trabajo en cola/en curso | Administrador de plataforma |
@@ -155,9 +157,67 @@ Entrada de registro:
 }
 ```
 
-Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Todavía no se implementaron las rutas reales de crear infraestructura, suspender, reanudar o eliminar. Respaldar y restaurar ya funcionan: ver [Respaldos](#respaldos-p3).
+Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Crear, suspender, reanudar y eliminar la infraestructura funcionan con Terraform/OpenTofu: ver [Motores IaC](#motores-iac-p2). Respaldar y restaurar: ver [Respaldos](#respaldos-p3).
 
-La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo y consulta la cancelación aunque no haya logs. Al perder la propiedad, se detiene el proceso local sin sobrescribir al nuevo dueño. Se admite cancelar y reintentar el diagnóstico y los respaldos; el reintento de IaC deberá reconciliar el estado existente antes de ejecutar de nuevo.
+La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo y consulta la cancelación aunque no haya logs. Al perder la propiedad, se detiene el proceso local sin sobrescribir al nuevo dueño. Se admite cancelar y reintentar cualquier operación. El reintento de IaC vuelve a planificar sobre el mismo estado del tenant: completa lo pendiente sin duplicar recursos.
+
+## Motores IaC (P2)
+
+El worker crea y administra la infraestructura de cada tenant con el motor elegido al registrarlo. Todos los motores implementan la misma interfaz `EngineAdapter` (`src/engines/adapter.js`): `versions`, `preview`, `apply`, `suspend`, `resume`, `destroy` y `outputs`. Todos devuelven el resultado común `{status, resources, outputs{urls,instance_ids,private_ips}, tool_versions, log_ref}`. Hoy están conectados **Terraform** y **OpenTofu**, que ejecutan el módulo [`infra/terraform/tenant`](../infra/terraform/tenant/README.md) de P1. Pulumi y CloudFormation aparecen en el registro, pero la API rechaza sus operaciones con `409 ENGINE_NOT_AVAILABLE` hasta que tengan adaptador.
+
+| Operación | Estados admitidos | Resultado | Qué hace |
+| --- | --- | --- | --- |
+| `create` | `draft`, `failed` | `ready` | Secretos en SSM → `init` → `plan` → `apply` → outputs → health checks → `deployments` |
+| `suspend` | `ready`, `failed` | `suspended` | `apply` con `suspended=true`: detiene las 3 EC2 y conserva los discos |
+| `resume` | `suspended`, `failed` | `ready` | `apply` con `suspended=false`, health checks y URLs nuevas (la IP pública cambia) |
+| `destroy` | todos menos `deleted` | `deleted` | `plan -destroy` → `apply`. Exige `confirm` igual al `tenant_id` (RF-18) |
+
+Los comandos se ejecutan con el [ejecutor común de P6](platform_api/src/worker/README.md) y los secretos los prepara su servicio SSM. Durante la operación el tenant pasa por `provisioning`, `suspending`, `resuming` o `deleting`. Si falla o se cancela queda en `failed`, y **Reintentar** vuelve a planificar sobre el mismo estado sin duplicar recursos (RF-12).
+
+- **Revisión del plan:** antes de aplicar se revisa el plan. Si una operación que no es `destroy` fuera a borrar el disco de datos de PostgreSQL, se detiene sin aplicar.
+- **Cancelar:** durante el `apply`, la cancelación (`OperationCancelled`) se atiende al terminar ese paso, para no dejar el estado a medias. En cualquier otro paso corta el proceso de inmediato.
+- **Perder la operación o apagar el worker:** sí corta el `apply`. En Linux/macOS terraform recibe SIGTERM y tiene 60 s para terminar y liberar el bloqueo; en Windows se usa `taskkill /F`. Si el bloqueo queda tomado, hay que revisarlo con `force-unlock` antes de reintentar.
+
+### Cómo se ejecuta y dónde queda el estado
+
+- **Directorio por tenant:** `.local/runs/<tenant_id>/<env>/` (fuera de Git) guarda:
+  - una copia de los `.tf` del módulo, que se refresca en cada operación;
+  - su propio `.terraform/`;
+  - `tenant.tfvars.json`, `backend.hcl` y el plan temporal.
+
+  Así Terraform y OpenTofu no comparten caché ni lockfile con el checkout ni entre tenants. La caché de proveedores se comparte por motor en `.local/runs/.plugin-cache/`.
+- **Estado:** backend S3 del bucket `IAC_STATE_BUCKET`, con la clave `tenants/<tenant_id>/<env>/terraform.tfstate`, `encrypt = true` y `use_lockfile = true` (bloqueo nativo de S3 con `-lock-timeout=5m`). Además, el índice de la cola impide dos operaciones activas del mismo tenant.
+- **Entrada:** se arma con:
+  - el tenant y su plan (`plans.sizing` y `limits`, y respaldo semanal o diario según el plan);
+  - los outputs de la base (`IAC_BASE_OUTPUTS`), generados con `terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json`;
+  - las AMIs de `infra/packer/ami-ids.json`.
+- **Secretos:** antes del primer `apply`, el servicio SSM de P6 (`worker/services/tenant-secrets.js`) crea `/tenants/<id>/<env>/{db_password,jwt_secret,admin_password}` como `SecureString`.
+  - Si ya existen, se reutilizan y no se reemplazan.
+  - Nunca llegan al tfstate, a las variables ni a los eventos; los eventos solo muestran los nombres.
+  - La contraseña inicial del administrador del tenant se consulta con `aws ssm get-parameter --with-decryption --name /tenants/<id>/<env>/admin_password`.
+- **Logs y errores:** cada línea del CLI se guarda como evento, ya redactado. El error final se traduce a un mensaje comprensible (bloqueo del estado, credenciales, cuota de vCPU, AMIs, permisos o bucket), y el detalle técnico queda en los eventos.
+- **Versiones (RF-13):** cada despliegue guarda en `deployments.tool_versions`:
+  - el motor y su versión, y la del proveedor AWS;
+  - la versión y el commit de las AMIs;
+  - el commit de las plantillas (con `-dirty` si había cambios locales).
+
+  También guarda las AMIs, los recursos y los outputs. El detalle del tenant los muestra en el panel **Infraestructura**.
+- **Vista previa:** se usa `infra/terraform/plan_preview.py` de P1 si hay Python (`PYTHON_BIN`). Sin Python se continúa con el conteo de `Plan: X to add…`.
+
+### Configurar el worker
+
+1. Instalar Terraform ≥ 1.10 (u OpenTofu ≥ 1.10 para tenants con `engine=tofu`) y, si se quiere la vista previa, Python 3.
+2. Dar credenciales AWS al proceso del worker (`AWS_PROFILE` o `AWS_*`). Necesitan permisos sobre el módulo tenant, el bucket del estado y, en `/tenants/*`, `ssm:DescribeParameters`, `ssm:PutParameter` y `ssm:AddTagsToResource`.
+3. En `platform_api/.env`, definir `IAC_STATE_BUCKET=<bucket del estado>`. Las demás variables tienen valores por defecto (ver `.env.example`).
+4. Exportar los outputs de la base a `.local/base.outputs.json` con el comando de arriba.
+5. Ejecutar `pnpm db:migrate` (aplica `003_engines.sql`) y luego `pnpm worker`.
+
+Para crear la infraestructura de un tenant:
+
+- **Desde la UI:** detalle del tenant → **Crear infraestructura**.
+- **Desde la API:** `POST /api/v1/tenants/<uuid>/operations` con `{"type":"create"}`.
+
+Para probar sin AWS (terraform simulado): `pnpm test:engines`.
 
 ## Respaldos (P3)
 

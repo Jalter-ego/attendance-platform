@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { operationsService } from '../services/operations.service';
+import { operationLabels } from '../types';
 import type { Operation, OperationEvent } from '../types';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { useAuth } from '../../auth/hooks/useAuth';
@@ -85,7 +86,11 @@ export function OperationPanel({
       <div className="panel-heading">
         <div>
           <span className="eyebrow">OPERACIÓN</span>
-          <h2>Diagnóstico de integración</h2>
+          <h2>
+            {operation
+              ? (operationLabels[operation.type] ?? operation.type)
+              : 'Operación'}
+          </h2>
         </div>
         {operation && <StatusBadge status={operation.status} />}
       </div>

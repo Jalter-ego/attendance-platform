@@ -5,6 +5,7 @@ import { HttpError } from '../../lib/errors.js';
 import { redact } from '../../lib/redact.js';
 import { getTenant, uuid } from '../tenants/tenants.service.js';
 import { backupIdInput } from '../backups/backups.service.js';
+import { assertCanEnqueue } from '../provisioning/provisioning.service.js';
 
 export async function appendEvent(client, id, level, message) {
   await client.query(
@@ -17,11 +18,17 @@ const operationInput = z.discriminatedUnion('type', [
   z.object({ type: z.literal('diagnostic') }).strict(),
   z.object({ type: z.literal('backup') }).strict(),
   z.object({ type: z.literal('restore'), backup_id: backupIdInput }).strict(),
+  // P2: infraestructura con el motor del tenant. destroy exige confirm = tenant_id (RF-18).
+  z.object({ type: z.literal('create') }).strict(),
+  z.object({ type: z.literal('suspend') }).strict(),
+  z.object({ type: z.literal('resume') }).strict(),
+  z.object({ type: z.literal('destroy'), confirm: z.string().max(40) }).strict(),
 ]);
 
 export async function enqueue(pool, user, tenantId, input, retryOf = null) {
-  await getTenant(pool, user, tenantId);
+  const tenant = await getTenant(pool, user, tenantId);
   const { type, ...params } = operationInput.parse(input);
+  assertCanEnqueue(tenant, type, params);
   return transaction(pool, async (client) => {
     const result = await client.query(
       'INSERT INTO operations(id, tenant_id, type, initiated_by, retry_of, params) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',

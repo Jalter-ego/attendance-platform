@@ -16,3 +16,13 @@ export interface OperationEvent {
   message: string;
   created_at: string;
 }
+
+export const operationLabels: Record<string, string> = {
+  diagnostic: 'Diagnóstico de integración',
+  backup: 'Respaldo',
+  restore: 'Restauración',
+  create: 'Creación de infraestructura',
+  suspend: 'Suspensión',
+  resume: 'Reanudación',
+  destroy: 'Eliminación',
+};

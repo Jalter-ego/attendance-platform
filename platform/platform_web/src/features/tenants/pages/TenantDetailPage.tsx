@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { tenantsService } from '../services/tenants.service';
-import { planNames } from '../types';
+import { engineNames, planNames } from '../types';
 import { operationsService } from '../../operations/services/operations.service';
 import { OperationPanel } from '../../operations/components/OperationPanel';
 import { useResource } from '../../../hooks/useResource';
@@ -29,18 +29,21 @@ export function TenantDetailPage() {
   const [pending, setPending] = useState(false);
   const selected =
     selection?.tenant === id ? selection.operation : data?.operations[0]?.id;
-  async function diagnose() {
+  async function start(kind: 'diagnostic' | 'create') {
     setActionError('');
     setPending(true);
     try {
-      const operation = await operationsService.diagnostic(id);
+      const operation =
+        kind === 'diagnostic'
+          ? await operationsService.diagnostic(id)
+          : await operationsService.infra(id, { type: 'create' });
       setSelection({ tenant: id, operation: operation.id });
       reload();
     } catch (error) {
       setActionError(
         error instanceof Error
           ? error.message
-          : 'No se pudo iniciar el diagnóstico.',
+          : 'No se pudo iniciar la operación.',
       );
     } finally {
       setPending(false);
@@ -57,7 +60,17 @@ export function TenantDetailPage() {
   const busy = data.operations.some((operation) =>
     ['queued', 'running'].includes(operation.status),
   );
-  const urls = data.deployments[0]?.outputs.urls;
+  const deployment = data.deployments[0];
+  const urls = deployment?.outputs.urls;
+  const canCreate = ['draft', 'failed'].includes(data.status);
+  const versions = deployment
+    ? [
+        [engineNames[deployment.engine], deployment.tool_versions[deployment.engine]],
+        ['Proveedor AWS', deployment.tool_versions.provider_aws],
+        ['AMIs (Packer)', deployment.tool_versions.image_version],
+        ['Plantillas (commit)', deployment.tool_versions.templates_commit],
+      ]
+    : [];
   return (
     <>
       <Link className="back-link" to="/tenants">
@@ -92,7 +105,7 @@ export function TenantDetailPage() {
             </div>
             <div>
               <dt>Motor</dt>
-              <dd>{data.engine}</dd>
+              <dd>{engineNames[data.engine]}</dd>
             </div>
             <div>
               <dt>Región</dt>
@@ -145,7 +158,7 @@ export function TenantDetailPage() {
               className="button primary"
               disabled={pending || busy}
               onClick={() => {
-                void diagnose();
+                void start('diagnostic');
               }}
             >
               {pending
@@ -158,6 +171,59 @@ export function TenantDetailPage() {
           )}
         </section>
       </div>
+      <section className="panel infra-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">INFRAESTRUCTURA</span>
+            <h2>Frontend, backend y base de datos en AWS</h2>
+          </div>
+          <Icon name="building" />
+        </div>
+        {deployment ? (
+          <dl className="infra-versions">
+            {versions.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value ?? '—'}</dd>
+              </div>
+            ))}
+            <div>
+              <dt>Recursos</dt>
+              <dd>
+                {deployment.resources
+                  .map((resource) => `${resource.role}: ${resource.id}`)
+                  .join(' · ') || '—'}
+              </dd>
+            </div>
+            <div>
+              <dt>Último despliegue</dt>
+              <dd>{new Date(deployment.created_at).toLocaleString('es-BO')}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="muted">
+            Todavía no hay despliegues. Al crear la infraestructura se ejecuta{' '}
+            {engineNames[data.engine]} con las AMIs de Packer; cloud-init y
+            Ansible configuran cada servidor.
+          </p>
+        )}
+        {user?.role === 'platform_admin' && canCreate && (
+          <button
+            className="button primary"
+            disabled={pending || busy}
+            onClick={() => {
+              void start('create');
+            }}
+          >
+            {busy
+              ? 'Hay una operación pendiente'
+              : data.status === 'failed'
+                ? 'Volver a aplicar (no duplica recursos)'
+                : 'Crear infraestructura'}
+            <Icon name="arrow" size={17} />
+          </button>
+        )}
+      </section>
       <div className="section-heading">
         <h2>Operaciones</h2>
         <span className="count-label">{data.operations.length}</span>

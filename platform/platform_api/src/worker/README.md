@@ -75,7 +75,7 @@ Si ya existe un `SecureString`, lo conserva. Si existe un `String`/`StringList`,
 
 Permisos del operador/worker: `ssm:DescribeParameters` para metadatos, `ssm:PutParameter` y `ssm:AddTagsToResource` sobre su prefijo. Las EC2 mantienen sus permisos de lectura ya definidos por Terraform. El servicio no crea usuarios IAM ni modifica esas políticas.
 
-**Integración pendiente:** llamar a este servicio desde el handler `create` que conectará P2, antes del primer apply. Registrar una institución y ejecutar el diagnóstico no escriben en SSM ni crean EC2. No se agregó una operación pública de prueba que cree secretos.
+**Integración (P2):** el handler `create` (`src/modules/provisioning/provisioning.service.js`) llama a este servicio antes del primer apply, y el adaptador Terraform/OpenTofu (`src/engines/terraform.js`) usa `runCommand`. Registrar una institución y ejecutar el diagnóstico no escriben en SSM ni crean EC2. No se agregó una operación pública de prueba que cree secretos.
 
 ## Pruebas locales
 
