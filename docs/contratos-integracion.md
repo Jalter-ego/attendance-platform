@@ -41,6 +41,16 @@ El resultado de un adaptador debe contener:
 
 P2 define el detalle de `resources` y las interfaces de los adaptadores; P6 define las rutas de la API y los estados de las operaciones. P1 no implementa esas capas en este bloque.
 
+### Adaptadores de motor (P2, implementado)
+
+- **Interfaz** `EngineAdapter` en `platform/platform_api/src/engines/adapter.js`: `versions`, `preview(ctx, {destroy})`, `apply`, `suspend`, `resume`, `destroy`, `outputs`. Terraform y OpenTofu comparten la implementación (`terraform.js`); Pulumi y CloudFormation se agregarán con la misma interfaz.
+- **`resources`**: lista de `{type, role, id}` derivada de los outputs. Por ejemplo, `{"type":"aws_instance","role":"db","id":"i-…"}` para cada EC2 y `{"type":"aws_ebs_volume","role":"db","id":"vol-…"}` para el disco de datos.
+- **`outputs`**: todos los outputs no sensibles del módulo (`urls`, `instance_ids`, `private_ips`, `db_volume_id`, `suspended`, `backup`, `releases`, etc.); los marcados `sensitive` se omiten.
+- **`tool_versions`**: `engine`, `terraform` o `tofu`, `provider_aws`, `image_version`, `image_git_commit`, `templates_commit` y `module`.
+- **`log_ref`**: `operations/<id>`, los eventos de la operación en la plataforma.
+- **Destino:** el resultado se guarda en `operations.result` y, salvo en `destroy`, en una fila de `deployments`. Las URLs vigentes son las del despliegue más reciente: al suspender quedan en `null` y al reanudar se reemplazan.
+- **Directorio y estado:** el worker ejecuta el módulo desde una copia por tenant (`.local/runs/<tenant_id>/<env>/module`) con `cloud_init_template_path` absoluto, como pide el README del módulo, y la clave de estado `tenants/<tenant_id>/<env>/terraform.tfstate`. Ver [Motores IaC](../platform/README.md#motores-iac-p2).
+
 ## Estado y concurrencia
 
 Un bucket nuevo, propio de este proyecto, almacena estados separados:
