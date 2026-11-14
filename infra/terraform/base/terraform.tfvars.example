@@ -5,3 +5,12 @@ vpc_cidr     = "10.90.0.0/16"
 # Pendiente: IPs publicas de las conexiones que ejecutaran Packer/abriran Grafana.
 # Una IP se escribe con /32. Con [] no hay acceso entrante SSH/Grafana.
 operator_cidrs = []
+
+# Opcional: habilita UNA EC2 compartida para Prometheus/Grafana, fuera de los tenants.
+# Copia el ID de ami.monitoring en infra/packer/ami-ids.json (misma cuenta/region).
+# Sin este bloque, monitoring=null y no se crea la instancia.
+# monitoring = {
+#   ami_id              = "ami-00000000000000000" # reemplazar por el ID real de P3
+#   instance_type       = "t3.small"
+#   root_volume_size_gb = 20
+# }

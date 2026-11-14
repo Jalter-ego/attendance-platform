@@ -10,6 +10,10 @@ output "integration" {
     packer_security_group_id         = aws_security_group.packer.id
     monitoring_security_group_id     = aws_security_group.monitoring.id
     monitoring_instance_profile_name = aws_iam_instance_profile.monitoring.name
+    monitoring_instance_id           = one(aws_instance.monitoring[*].id)
+    monitoring_private_ip            = one(aws_instance.monitoring[*].private_ip)
+    monitoring_public_ip             = local.monitoring_public_ip == "" ? null : local.monitoring_public_ip
+    grafana_url                      = local.monitoring_public_ip != null && local.monitoring_public_ip != "" ? "http://${local.monitoring_public_ip}:3000" : null
     ssm_endpoint_id                  = aws_vpc_endpoint.ssm.id
     backups_bucket                   = aws_s3_bucket.backups.id
   }

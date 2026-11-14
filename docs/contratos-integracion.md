@@ -21,6 +21,8 @@ Attendance sigue siendo una aplicación de una sola institución. `tenant_id` id
 
 P1 entrega los IDs de VPC, subredes y SG desde `infra/terraform/base`, mediante `terraform output -json integration`. El contrato incluye `region`, `availability_zone`, `vpc_id`, `public_subnet_id`, `private_subnet_id`, `packer_security_group_id`, `monitoring_security_group_id`, `monitoring_instance_profile_name`, `ssm_endpoint_id` y `backups_bucket`. Tras aplicar cambios de la base hay que volver a exportar el output. Son configuración interna del worker, no valores que el usuario de la plataforma deba escribir en el formulario.
 
+Para A5/P5 también entrega `monitoring_instance_id`, `monitoring_private_ip`, `monitoring_public_ip` y `grafana_url`. Son `null` mientras `monitoring=null` en la base. Al habilitarlo se crea una sola EC2 compartida desde un ID fijo de la AMI monitoring de P3, fuera del estado de cualquier tenant. P5 recibe esos outputs para aplicar su configuración de descubrimiento EC2, scrapes, dashboards y alertas; la AMI solo trae los servicios y una configuración inicial. Puede administrarla por Run Command: su rol tiene las acciones del agente SSM y lectura de descubrimiento EC2, sin acceso a secretos de tenants. Grafana (3000) solo admite `operator_cidrs`; Prometheus (9090) se consulta localmente desde Grafana. Los participantes que apliquen la base deben conservar el mismo bloque `monitoring`; quitarlo planifica eliminar la EC2 y su disco.
+
 El resultado de un adaptador debe contener:
 
 ```json

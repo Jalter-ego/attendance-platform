@@ -14,6 +14,18 @@ mock_provider "aws" {
       names = ["us-east-2a"]
     }
   }
+
+  mock_data "aws_ami" {
+    defaults = { id = "ami-11111111111111111" }
+  }
+
+  mock_resource "aws_instance" {
+    defaults = {
+      id         = "i-00000000000000001"
+      public_ip  = "198.51.100.25"
+      private_ip = "10.90.1.25"
+    }
+  }
 }
 
 override_resource {
@@ -50,6 +62,18 @@ override_resource {
   target          = aws_s3_bucket.backups
   override_during = plan
   values          = { arn = "arn:aws:s3:::attendance-platform-backups-123456789012" }
+}
+
+override_resource {
+  target          = aws_security_group.monitoring
+  override_during = plan
+  values          = { id = "sg-00000000000000004" }
+}
+
+override_resource {
+  target          = aws_iam_role.monitoring
+  override_during = plan
+  values          = { id = "attendance-platform-monitoring" }
 }
 
 run "isolated_network" {
@@ -103,6 +127,18 @@ run "isolated_network" {
       output.integration.private_subnet_id == "subnet-00000000000000002"
     )
     error_message = "Los consumidores deben poder distinguir los IDs de la red publica y privada."
+  }
+
+  assert {
+    condition = (
+      length(aws_instance.monitoring) == 0 &&
+      length(aws_iam_role_policy.monitoring_ssm_agent) == 0 &&
+      output.integration.monitoring_instance_id == null &&
+      output.integration.monitoring_private_ip == null &&
+      output.integration.monitoring_public_ip == null &&
+      output.integration.grafana_url == null
+    )
+    error_message = "Sin configuracion de monitoreo no se deben crear EC2 ni entregar URLs inexistentes."
   }
 }
 
@@ -223,4 +259,120 @@ run "reject_invalid_vpc" {
   }
 
   expect_failures = [var.vpc_cidr]
+}
+
+run "monitoring_uses_shared_network_and_secure_boot" {
+  command = plan
+
+  variables {
+    monitoring = { ami_id = "ami-11111111111111111" }
+  }
+
+  assert {
+    condition = (
+      length(aws_instance.monitoring) == 1 &&
+      aws_instance.monitoring[0].ami == var.monitoring.ami_id &&
+      data.aws_ami.monitoring[0].owners == tolist(["self"]) &&
+      contains([for filter in data.aws_ami.monitoring[0].filter : filter.name == "tag:Role" && filter.values == toset(["monitoring"])], true) &&
+      aws_instance.monitoring[0].subnet_id == aws_subnet.public.id &&
+      aws_instance.monitoring[0].associate_public_ip_address &&
+      aws_instance.monitoring[0].vpc_security_group_ids == toset([aws_security_group.monitoring.id]) &&
+      aws_instance.monitoring[0].iam_instance_profile == aws_iam_instance_profile.monitoring.name &&
+      aws_instance.monitoring[0].tags["Role"] == "monitoring"
+    )
+    error_message = "Debe crearse una sola EC2 desde la AMI monitoring de P3, con el SG/perfil compartidos y salida publica."
+  }
+
+  assert {
+    condition = (
+      aws_instance.monitoring[0].instance_type == "t3.small" &&
+      aws_instance.monitoring[0].root_block_device[0].volume_type == "gp3" &&
+      aws_instance.monitoring[0].root_block_device[0].volume_size == 20 &&
+      aws_instance.monitoring[0].root_block_device[0].encrypted &&
+      aws_instance.monitoring[0].root_block_device[0].delete_on_termination &&
+      aws_instance.monitoring[0].metadata_options[0].http_tokens == "required" &&
+      aws_instance.monitoring[0].credit_specification[0].cpu_credits == "standard" &&
+      aws_instance.monitoring[0].user_data_replace_on_change &&
+      strcontains(aws_instance.monitoring[0].user_data, "grafana-server") &&
+      strcontains(aws_instance.monitoring[0].user_data, "snap.amazon-ssm-agent.amazon-ssm-agent.service")
+    )
+    error_message = "Monitoreo debe usar los tamanos previstos, disco cifrado, IMDSv2 y arrancar servicios ya instalados."
+  }
+
+  assert {
+    condition = (
+      output.integration.monitoring_instance_id == "i-00000000000000001" &&
+      output.integration.monitoring_private_ip == "10.90.1.25" &&
+      output.integration.monitoring_public_ip == "198.51.100.25" &&
+      output.integration.grafana_url == "http://198.51.100.25:3000" &&
+      length(aws_vpc_security_group_ingress_rule.grafana) == 0
+    )
+    error_message = "Los outputs deben entregar IDs y URL sin abrir Grafana mientras falten IPs autorizadas."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy.monitoring_ssm_agent) == 1 &&
+      aws_iam_role_policy.monitoring_ssm_agent[0].role == aws_iam_role.monitoring.id &&
+      contains(jsondecode(aws_iam_role_policy.monitoring_ssm_agent[0].policy).Statement[0].Action, "ssmmessages:OpenControlChannel") &&
+      alltrue([for statement in jsondecode(aws_iam_role_policy.monitoring_ssm_agent[0].policy).Statement :
+        alltrue([for action in statement.Action :
+          !contains(["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:SendCommand", "ssm:*", "*"], action)
+        ])
+      ])
+    )
+    error_message = "El agente debe recibir comandos sin permiso para enviar comandos ni leer secretos de tenants."
+  }
+}
+
+run "monitoring_stopped_has_no_public_url" {
+  command = plan
+
+  variables {
+    monitoring = { ami_id = "ami-11111111111111111" }
+  }
+
+  override_resource {
+    target          = aws_instance.monitoring[0]
+    override_during = plan
+    values          = { public_ip = "" }
+  }
+
+  assert {
+    condition = (
+      output.integration.monitoring_public_ip == null &&
+      output.integration.grafana_url == null
+    )
+    error_message = "Una EC2 sin IP publica no debe producir una URL de Grafana invalida."
+  }
+}
+
+run "reject_monitoring_arm_size" {
+  command = plan
+
+  variables {
+    monitoring = { ami_id = "ami-11111111111111111", instance_type = "t4g.small" }
+  }
+
+  expect_failures = [var.monitoring]
+}
+
+run "reject_monitoring_placeholder_ami" {
+  command = plan
+
+  variables {
+    monitoring = { ami_id = "ami-00000000000000000" }
+  }
+
+  expect_failures = [var.monitoring]
+}
+
+run "reject_monitoring_small_disk" {
+  command = plan
+
+  variables {
+    monitoring = { ami_id = "ami-11111111111111111", root_volume_size_gb = 8 }
+  }
+
+  expect_failures = [var.monitoring]
 }
