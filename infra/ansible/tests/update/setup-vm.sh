@@ -55,6 +55,8 @@ server {
     root /var/www/attendance;
     index index.html;
     location = /healthz { default_type text/plain; return 200 "ok\n"; }
+    # Como nginx-attendance.conf.j2: la API pasa por el nginx del frontend.
+    location /core/ { proxy_pass http://127.0.0.1:5000; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; }
     location / { try_files $uri $uri/ /index.html; }
 }
 N

@@ -15,7 +15,7 @@ cat > /tmp/tenant.json <<J
 {"vm_role":"$COMP","tenant_id":"colegio-a","env":"test","region":"us-east-2"}
 J
 rm -f /var/lib/attendance/update.json
-cd "$STAGE/ansible"
+cd "$STAGE/ansible" || exit 1
 ANSIBLE_CONFIG=$STAGE/ansible/ansible.cfg ansible-playbook update.yml \
   -e @/tmp/tenant.json -e release_stage="$STAGE" > /tmp/ansible-$COMP-$VER.log 2>&1
 RC=$?
