@@ -35,7 +35,7 @@ import json
 from pathlib import Path
 
 source = json.loads(Path("docs/examples/tenant.example.json").read_text())
-fields = ("tenant_id", "name", "env", "plan", "engine", "contact_email", "timezone", "sizing", "ami", "suspended")
+fields = ("tenant_id", "name", "env", "plan", "engine", "contact_email", "timezone", "sizing", "limits", "backup", "ami", "suspended")
 config = {field: source[field] for field in fields}
 config["base"] = json.loads(Path(".local/base.outputs.json").read_text())
 Path(".local/san-marcos.tfvars.json").write_text(json.dumps(config, indent=2) + "\n")

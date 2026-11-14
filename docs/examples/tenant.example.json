@@ -13,6 +13,15 @@
     "db": "t3.micro",
     "db_disk_gb": 10
   },
+  "limits": {
+    "max_students": 100,
+    "max_teachers": 10,
+    "max_courses": 20
+  },
+  "backup": {
+    "schedule": "weekly",
+    "retention_days": 28
+  },
   "ami": {
     "frontend": "ami-00000000000000000",
     "backend": "ami-00000000000000000",
