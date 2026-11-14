@@ -6,10 +6,20 @@ import {
   runBackupOperation,
   ScriptError,
 } from '../modules/backups/backups.service.js';
+import { runInfraOperation } from '../modules/provisioning/provisioning.service.js';
+import { OperationError } from '../lib/operation-error.js';
 
 // Handlers por tipo de operación: reciben { pool, config, operation, report, signal } y
 // devuelven el resultado JSON que se guarda en operations.result.
-const handlers = { backup: runBackupOperation, restore: runBackupOperation };
+const handlers = {
+  backup: runBackupOperation,
+  restore: runBackupOperation,
+  // P2: motores IaC (src/engines) a través de provisioning.service.js.
+  create: runInfraOperation,
+  suspend: runInfraOperation,
+  resume: runInfraOperation,
+  destroy: runInfraOperation,
+};
 
 class Cancelled extends Error {}
 class LeaseLost extends Error {}
@@ -70,7 +80,7 @@ const steps = [
   ],
 ];
 
-// P2 integrará aquí los handlers de los motores. El diagnóstico nunca llama a AWS.
+// Los handlers de los motores (P2) están en `handlers`. El diagnóstico nunca llama a AWS.
 export async function runOnce(
   pool,
   { workerId = randomUUID(), signal, stepDelayMs = 350, config } = {},
@@ -131,7 +141,7 @@ export async function runOnce(
     errorMessage =
       status !== 'failed'
         ? null
-        : error instanceof ScriptError
+        : error instanceof ScriptError || error instanceof OperationError
           ? error.message.slice(0, 500)
           : 'El worker se interrumpió. Revisa y reintenta la operación.';
   } finally {

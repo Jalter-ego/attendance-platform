@@ -12,7 +12,8 @@
     "db:check": "node --env-file-if-exists=.env scripts/check-db.js",
     "db:migrate": "node --env-file-if-exists=.env scripts/migrate.js",
     "admin:create": "node --env-file-if-exists=.env scripts/create-admin.js",
-    "test:backups": "node --test tests/backups.test.js"
+    "test:backups": "node --test tests/backups.test.js",
+    "test:engines": "node --test tests/engines.test.js"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

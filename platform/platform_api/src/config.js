@@ -10,6 +10,9 @@ const defaultBash =
 const defaultBackupScript = fileURLToPath(
   new URL('../../../infra/backups/tenant-backup.sh', import.meta.url),
 );
+// Motores IaC (P2): rutas del monorepo que usa el worker. Todas se pueden sobrescribir.
+const repoPath = (relative) =>
+  fileURLToPath(new URL(`../../../${relative}`, import.meta.url));
 
 const boolean = z
   .enum(['true', 'false'])
@@ -32,6 +35,27 @@ const schema = z.object({
   BACKUP_BASH: z.string().trim().default(defaultBash),
   BACKUP_SCRIPT: z.string().trim().default(defaultBackupScript),
   BACKUP_TIMEOUT_S: z.coerce.number().int().min(60).max(3600).default(900),
+  // Motores IaC (P2). El bucket del estado es el que crea infra/bootstrap; vacío impide
+  // ejecutar operaciones de infraestructura (el resto de la plataforma funciona igual).
+  IAC_STATE_BUCKET: z.string().trim().default(''),
+  IAC_BASE_OUTPUTS: z.string().trim().default(repoPath('.local/base.outputs.json')),
+  IAC_AMI_IDS: z.string().trim().default(repoPath('infra/packer/ami-ids.json')),
+  IAC_MODULE_DIR: z.string().trim().default(repoPath('infra/terraform/tenant')),
+  IAC_CLOUD_INIT_TEMPLATE: z
+    .string()
+    .trim()
+    .default(repoPath('infra/cloud-init/user-data.yaml.tftpl')),
+  IAC_PLAN_PREVIEW: z.string().trim().default(repoPath('infra/terraform/plan_preview.py')),
+  IAC_RUNS_DIR: z.string().trim().default(repoPath('.local/runs')),
+  IAC_TIMEOUT_S: z.coerce.number().int().min(300).max(7200).default(3600),
+  HEALTH_TIMEOUT_S: z.coerce.number().int().min(30).max(3600).default(900),
+  TERRAFORM_BIN: z.string().trim().default('terraform'),
+  TOFU_BIN: z.string().trim().default('tofu'),
+  AWS_BIN: z.string().trim().default('aws'),
+  PYTHON_BIN: z
+    .string()
+    .trim()
+    .default(process.platform === 'win32' ? 'python' : 'python3'),
 });
 
 export function readConfig(env = process.env) {
