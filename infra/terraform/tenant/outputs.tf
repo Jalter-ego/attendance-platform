@@ -3,13 +3,18 @@ output "deployment_name" {
 }
 
 output "urls" {
-  description = "La API se publica por nginx; backend y DB no tienen IP publica. Verificar health antes de marcar listo."
+  description = "URLs con la IP publica actual tras el cambio de estado; campos null al suspender. Verificar health antes de marcar listo."
   value = {
-    frontend        = "http://${aws_instance.frontend.public_ip}/"
-    api             = "http://${aws_instance.frontend.public_ip}/core/api/v1"
-    frontend_health = "http://${aws_instance.frontend.public_ip}/healthz"
-    backend_health  = "http://${aws_instance.frontend.public_ip}/core/api/v1/health"
+    frontend        = var.suspended ? null : "http://${data.aws_instance.frontend_runtime.public_ip}/"
+    api             = var.suspended ? null : "http://${data.aws_instance.frontend_runtime.public_ip}/core/api/v1"
+    frontend_health = var.suspended ? null : "http://${data.aws_instance.frontend_runtime.public_ip}/healthz"
+    backend_health  = var.suspended ? null : "http://${data.aws_instance.frontend_runtime.public_ip}/core/api/v1/health"
   }
+}
+
+output "suspended" {
+  description = "Estado de suspension solicitado; running no garantiza que la aplicacion ya haya terminado de arrancar."
+  value       = var.suspended
 }
 
 output "instance_ids" {

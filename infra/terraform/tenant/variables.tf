@@ -76,6 +76,13 @@ variable "engine" {
   }
 }
 
+variable "suspended" {
+  type        = bool
+  default     = false
+  nullable    = false
+  description = "Detiene las tres EC2 sin eliminar discos. Crear primero con false y esperar los health checks antes de suspender."
+}
+
 variable "sizing" {
   type = object({
     frontend   = string
