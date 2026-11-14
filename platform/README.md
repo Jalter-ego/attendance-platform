@@ -101,12 +101,14 @@ platform_api/
   src/worker/                Proceso que reclama y ejecuta trabajos
   src/engines/               EngineAdapter, Terraform/OpenTofu y CloudFormation (P2)
   src/modules/provisioning/  Operaciones create/suspend/resume/destroy del worker (P2)
+  src/modules/plans/         Catálogo de planes: CRUD, validación y versiones (P4)
   src/db/                    Conexiones y transacciones
   src/lib/                   Errores, contraseñas y redacción de logs
 platform_web/src/
   features/auth/             Contexto, hooks, servicios y login
   features/tenants/          Listado, registro y detalle
   features/operations/       Progreso, eventos y acciones
+  features/plans/            Pantalla Planes y editor de planes (P4)
   components/                Layout y componentes compartidos
   hooks/                     Consulta/refresco de datos
   lib/                       Cliente HTTP
@@ -114,7 +116,8 @@ platform_web/src/
 
 - **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. CloudFormation conectado ([plantilla](../infra/cloudformation/README.md)). Pendiente: Pulumi. Registrar no equivale a aprovisionar.
 - **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
-- **P3/P4/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`. El catálogo inicial se consulta desde la API; P4 puede ampliarlo mediante nuevas migraciones y sus endpoints.
+- **P3/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`.
+- **P4:** pantalla **Planes** y API `/plans` (ver [Planes](#planes-p4)). Cada tenant guarda la copia del plan con la que se creó y los motores despliegan esa copia.
 - **P6:** el ejecutor común y el servicio SSM ya están conectados al flujo de creación de P2 (`src/worker/handlers/create.handler.js`), junto con el health check de P4 y la persistencia de deployments/outputs/versiones. Suspender/reanudar/eliminar conservan los adaptadores de P2 y la finalización protegida por el worker.
 
 H4/H5 ya tienen un [ejecutor común de procesos](platform_api/src/worker/README.md), integrado a los respaldos y a los motores IaC: progreso filtrado, timeout, cancelación del árbol de procesos y errores legibles. La cancelación se detecta también mientras el comando permanece en silencio. El servicio SSM prepara los tres secretos por tenant y conserva los existentes al reintentar.
@@ -133,7 +136,9 @@ Prefijo: `/api/v1`. Los cuerpos son JSON y la autenticación usa la cookie HttpO
 | `POST /auth/login` | `{email,password}`; crea sesión | Público, con límite de intentos |
 | `GET /auth/me` | Usuario actual | Sesión |
 | `POST /auth/logout` | Invalida sesión | Sesión |
-| `GET /plans` | Catálogo con `sizing`, `limits` y `backup` (respaldo que aplica el motor según el plan) | Sesión |
+| `GET /plans` | Catálogo con `sizing`, `limits`, `backup`, `description`, `version` y `tenants{total,outdated}` | Sesión |
+| `GET /plans/:code` | Plan + `tenant_list` con la versión de cada tenant | Administrador de plataforma |
+| `POST /plans` · `PUT /plans/:code` · `DELETE /plans/:code` | Crear, editar (nueva versión; exige la `version` vista) y eliminar si no tiene tenants. Ver [Planes](#planes-p4) | Administrador de plataforma |
 | `GET /engines` | Motores del wizard: `{code,label,available}`; `available=false` = aún sin adaptador | Sesión |
 | `GET /tenants` | `q`, `status`, `env`, `plan`, `limit`, `offset` | Sesión, filtrado por permisos |
 | `POST /tenants` | Registrar institución, sin desplegar | Administrador de plataforma |
@@ -197,7 +202,7 @@ Los comandos se ejecutan con el [ejecutor común de P6](platform_api/src/worker/
   Así Terraform y OpenTofu no comparten caché ni lockfile con el checkout ni entre tenants. La caché de proveedores se comparte por motor en `.local/runs/.plugin-cache/`.
 - **Estado:** backend S3 del bucket `IAC_STATE_BUCKET`, con la clave `tenants/<tenant_id>/<env>/terraform.tfstate`, `encrypt = true` y `use_lockfile = true` (bloqueo nativo de S3 con `-lock-timeout=5m`). Además, el índice de la cola impide dos operaciones activas del mismo tenant.
 - **Entrada:** se arma con:
-  - el tenant y su plan (`plans.sizing` y `limits`, y respaldo semanal o diario según el plan);
+  - el tenant y **la copia de su plan** (`tenants.plan_snapshot`: `sizing`, `limits` y `backup` de la versión con la que se creó; ver [Planes](#planes-p4));
   - los outputs de la base (`IAC_BASE_OUTPUTS`), generados con `terraform -chdir=infra/terraform/base output -json integration > .local/base.outputs.json`;
   - las AMIs de `infra/packer/ami-ids.json`.
 
@@ -241,6 +246,36 @@ Pantalla **Respaldos** del menú lateral (`/backups?tenant=<id>`): lista los res
 | `BACKUP_TIMEOUT_S` | `900` | Tiempo máximo del comando en la VM db |
 
 Requiere AWS CLI v2, la VM db del tenant encendida y AMIs ≥ 0.2.1. El proceso hijo no recibe `DATABASE_URL` ni los secretos de la plataforma. Cancelar corta el script local; un comando que ya llegó a la VM db termina allí. Pruebas sin AWS: `pnpm test:backups`.
+
+## Planes (P4)
+
+Pantalla **Planes** del menú lateral (`/plans`). Muestra cada plan con:
+
+- sus límites de la app (estudiantes, docentes y cursos);
+- servidores, disco y respaldo;
+- su versión y cuántos tenants lo usan, incluidos los que están en una versión anterior.
+
+El administrador de plataforma puede crear, editar y eliminar planes. Un plan nuevo aparece enseguida en el wizard **Crear tenant**. Catálogo completo, significado de cada límite y reglas: [docs/catalogo-planes.md](../docs/catalogo-planes.md).
+
+- **Versiones (RF-04):** al registrarse, cada tenant guarda una copia del plan vigente (`tenants.plan_snapshot`, la llena un trigger de `004_plans.sql`). Editar un plan sube su versión y **no cambia los tenants existentes**. El editor muestra cuáles son y exige confirmarlo. Los motores despliegan la copia: si un `suspend`/`resume` tomara los límites nuevos, cambiaría el `user_data` y recrearía las EC2. Llevar un tenant a la versión nueva es un cambio de plan (RF-06).
+- **Validación:** mismas reglas que el módulo de P1, en la API (zod, con mensajes por campo) y en la base (`CHECK`):
+  - tamaños `t3.micro` a `t3.large`;
+  - disco de BD entero entre 10 y 1000 GB;
+  - respaldo `weekly/28`, `daily/14` o `daily/30`;
+  - límites enteros ≥ 1 (vacío = sin límite).
+- **Concurrencia:** `PUT` exige la `version` que vio el editor. Si otro guardó antes, responde `409 PLAN_CHANGED`.
+- **Eliminar:** solo un plan que ningún tenant usa ni usó; si no, `409 PLAN_IN_USE`.
+
+Migración: `pnpm db:migrate` aplica `004_plans.sql`, que agrega respaldo, descripción y versión a `plans`, `plan_snapshot` a `tenants` y rellena los tenants existentes.
+
+Pruebas contra PostgreSQL real: crean una base desechable `plans_test_*`, aplican todas las migraciones y la borran al terminar. Usa un servidor local donde el usuario pueda crear bases, por ejemplo el de `compose.yaml`; no la base de Supabase del equipo:
+
+```bash
+cd platform/platform_api
+TEST_DATABASE_URL=postgresql://attendance:attendance_local@127.0.0.1:5433/postgres pnpm test:plans
+```
+
+Sin `TEST_DATABASE_URL`, estas pruebas se omiten en `pnpm test`.
 
 ## Verificación
 
