@@ -1,6 +1,6 @@
 # Conectar el adaptador de P2 al flujo create
 
-P6 usa los adaptadores reales de P2 en `src/engines/adapter.js`. `createEngineAdapters(config)` los construye con la configuración compartida por API y worker. En integración se puede aprovisionar con Terraform, OpenTofu y CloudFormation. En modo local el worker simula las operaciones en PostgreSQL.
+P6 usa los adaptadores reales de P2 en `src/engines/adapter.js`. `createEngineAdapters(config)` los construye con la configuración compartida por API y worker. En integración se puede aprovisionar con Terraform, OpenTofu, CloudFormation y Pulumi. En modo local el worker simula las operaciones en PostgreSQL.
 
 ## Contrato
 
@@ -12,10 +12,10 @@ P6 usa los adaptadores reales de P2 en `src/engines/adapter.js`. `createEngineAd
 `context` contiene:
 
 - `input`: configuración congelada del tenant, base, sizing/límites/respaldos del plan, AMIs, metadatos `image` y estado deseado `suspended`. Sin passwords ni JWT.
-- `backend`: bucket, región, clave `tenants/<id>/<env>/terraform.tfstate`, cifrado y bloqueo para Terraform/OpenTofu. Para CloudFormation contiene `{type:"cloudformation", region, stack_name}` y no requiere un bucket de estado.
+- `backend`: bucket, región, clave `tenants/<id>/<env>/terraform.tfstate`, cifrado y bloqueo para Terraform/OpenTofu. Para CloudFormation contiene `{type:"cloudformation", region, stack_name}` y no requiere un bucket de estado. Para Pulumi, `{type:"pulumi", url, stack}` con `url` en `s3://<bucket>/pulumi`.
 - `directory`: directorio estable por tenant/entorno/motor; no crear otro por cada reintento.
 - `variableFile` (solo Terraform/OpenTofu): JSON preparado para Terraform, con la ruta absoluta de `cloud_init_template_path`.
-- `backendFile` (solo Terraform/OpenTofu): configuración HCL de S3, sin credenciales. No se crean estos archivos para CloudFormation.
+- `backendFile` (solo Terraform/OpenTofu): configuración HCL de S3, sin credenciales. No se crean estos archivos para CloudFormation ni Pulumi.
 - `moduleDirectory`: fuentes de `infra/terraform/tenant` para Terraform/OpenTofu. Otros motores usan sus fuentes propias.
 - `cloudInitTemplatePath`, `signal`, `report` y `execute(options)`.
 
@@ -58,7 +58,7 @@ pnpm db:migrate
 
 El migrador conserva las 003 de P2/P6 y converge sus columnas y tipos de operación. Antes de reiniciar el API y el worker, aplica las migraciones con `pnpm db:migrate`. No hace falta ejecutar Terraform para instalar estos cambios de P6.
 
-En la web se puede crear desde el asistente o aprovisionar un borrador desde su detalle. `PLATFORM_DEPLOY_MODE` indica si se usa el simulador local o la infraestructura real. La eliminación de recursos requiere una vista previa y confirmación. CloudFormation admite crear, suspender, reanudar y eliminar en integración.
+En la web se puede crear desde el asistente o aprovisionar un borrador desde su detalle. `PLATFORM_DEPLOY_MODE` indica si se usa el simulador local o la infraestructura real. La eliminación de recursos requiere una vista previa y confirmación. CloudFormation y Pulumi admiten crear, suspender, reanudar y eliminar en integración.
 
 ## Verificación
 

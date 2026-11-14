@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdtemp, writeFile, rm, readFile, access, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, access, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -424,6 +424,57 @@ test('creación: API, cola, worker, salud y persistencia con PostgreSQL real', {
     assert.equal((await operation(preview.id)).status, 'succeeded');
     const destroyed = (await send({ type: 'delete', confirm: true, preview_id: preview.id }).expect(202)).body;
     await runNative();
+    assert.equal((await operation(destroyed.id)).status, 'succeeded');
+    assert.equal((await state(record.id)).status, 'deleted');
+    assert.equal(secrets, 1);
+  });
+
+  await t.test('Pulumi: ciclo completo desde API con stack propio en el backend compartido', async () => {
+    const program = join(directory, 'pulumi-program');
+    await mkdir(join(program, 'node_modules', '@pulumi', 'aws'), { recursive: true });
+    await writeFile(join(program, 'index.js'), '// programa simulado\n');
+    await writeFile(join(program, 'node_modules', '@pulumi', 'aws', 'package.json'), '{"version":"7.55.0"}');
+    const pulumiConfig = { ...config, PULUMI_BIN: fileURLToPath(new URL('./fixtures/fake-pulumi.mjs', import.meta.url)),
+      IAC_PULUMI_DIR: program, PULUMI_CONFIG_PASSPHRASE: 'frase-de-prueba' };
+    const pulumiApp = createApp({ pool, config: pulumiConfig });
+    const engines = (await request(pulumiApp).get('/api/v1/engines').set('Cookie', cookie).expect(200)).body.items;
+    assert.equal(engines.find(({ code }) => code === 'pulumi').available, true);
+    const record = (await request(pulumiApp).post('/api/v1/tenants').set('Cookie', cookie)
+      .send({ ...input, tenant_id: 'pulumi-integrado', engine: 'pulumi' }).expect(201)).body;
+    const send = (body) => request(pulumiApp).post(`/api/v1/tenants/${record.id}/operations`).set('Cookie', cookie).send(body);
+    const queued = (await send({ type: 'create' }).expect(202)).body;
+    assert.deepEqual(queued.params.deployment.backend, {
+      type: 'pulumi', url: 's3://attendance-state-test/pulumi?region=us-east-2',
+      stack: 'organization/attendance-tenant/pulumi-integrado-test',
+    });
+    let secrets = 0;
+    const runPulumi = () => runOnce(pool, { config: pulumiConfig, creationServices: { prepareSecrets: async () => { secrets++; } } });
+    await runPulumi();
+    assert.equal((await operation(queued.id)).status, 'succeeded');
+    assert.equal((await state(record.id)).status, 'ready');
+    const saved = (await pool.query('SELECT * FROM deployments WHERE operation_id=$1', [queued.id])).rows[0];
+    assert.equal(saved.outputs.stack_name, 'organization/attendance-tenant/pulumi-integrado-test');
+    assert.equal(saved.outputs.state.stack, 'organization/attendance-tenant/pulumi-integrado-test');
+    assert.equal(saved.tool_versions.pulumi, 'v3.999.0');
+    assert.equal(saved.tool_versions.provider_aws, '7.55.0');
+    const workDir = join(pulumiConfig.DEPLOYMENT_WORK_DIR, record.tenant_id, record.env, record.engine);
+    await assert.rejects(access(join(workDir, 'backend.hcl')), { code: 'ENOENT' });
+    await access(join(workDir, 'Pulumi.yaml'));
+    const suspended = (await send({ type: 'suspend' }).expect(202)).body;
+    await runPulumi();
+    assert.equal((await operation(suspended.id)).status, 'succeeded');
+    assert.equal((await state(record.id)).status, 'suspended');
+    const resumed = (await send({ type: 'resume' }).expect(202)).body;
+    await runPulumi();
+    assert.equal((await operation(resumed.id)).status, 'succeeded');
+    const detail = (await request(pulumiApp).get(`/api/v1/tenants/${record.id}`).set('Cookie', cookie).expect(200)).body;
+    assert.match(detail.deployments[0].outputs.urls.frontend, /^http:\/\/3\.15\.0\.\d+\/$/);
+    const preview = (await send({ type: 'preview-delete' }).expect(202)).body;
+    await runPulumi();
+    const previewResult = (await operation(preview.id)).result;
+    assert.ok(previewResult.changes.some((line) => line.includes('disco de datos')));
+    const destroyed = (await send({ type: 'delete', confirm: true, preview_id: preview.id }).expect(202)).body;
+    await runPulumi();
     assert.equal((await operation(destroyed.id)).status, 'succeeded');
     assert.equal((await state(record.id)).status, 'deleted');
     assert.equal(secrets, 1);

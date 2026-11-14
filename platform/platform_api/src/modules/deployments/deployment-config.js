@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { tenantInput } from '../tenants/tenants.service.js';
 import { OperationError } from '../../worker/errors.js';
 import { BACKUP_BY_PLAN } from '../../engines/tenant-input.js';
+import { backendUrl as pulumiBackendUrl } from '../../engines/pulumi.js';
 
 const awsId = (prefix) => z.string().regex(new RegExp(`^${prefix}-[a-f0-9]{8}([a-f0-9]{9})?$`));
 const amiId = z.string().regex(/^ami-[a-f0-9]{17}$/).refine((id) => id !== 'ami-00000000000000000');
@@ -34,6 +35,7 @@ export const deploymentSnapshot = z.object({
   backend: z.union([
     z.object({ bucket, region, key: z.string(), encrypt: z.literal(true), use_lockfile: z.literal(true) }),
     z.object({ type: z.literal('cloudformation'), region: z.string(), stack_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,127}$/) }),
+    z.object({ type: z.literal('pulumi'), url: z.string().regex(/^(s3|file):\/\/\S+$/), stack: z.string().regex(/^organization\/attendance-tenant\/[a-z0-9-]+$/) }),
   ]),
   image_version: z.string().regex(/^[0-9A-Za-z.+-]{1,40}$/),
   image_git_commit: z.string().regex(/^[a-f0-9]{7,40}$/).nullable().optional(),
@@ -57,6 +59,9 @@ export function validateSnapshot(snapshot, tenant) {
     if (value.backend.type !== 'cloudformation' || value.backend.region !== tenant.region ||
         value.backend.stack_name !== `${value.input.base.project_name}-${tenant.tenant_id}-${tenant.env}`)
       throw new OperationError('DEPLOYMENT_IDENTITY', 'El stack guardado no corresponde a esta institución y entorno.');
+  } else if (tenant.engine === 'pulumi') {
+    if (value.backend.type !== 'pulumi' || value.backend.stack !== `organization/attendance-tenant/${tenant.tenant_id}-${tenant.env}`)
+      throw new OperationError('DEPLOYMENT_IDENTITY', 'El stack Pulumi guardado no corresponde a esta institución y entorno.');
   } else if (value.backend.type || value.backend.key !== `tenants/${tenant.tenant_id}/${tenant.env}/terraform.tfstate`)
     throw new OperationError('DEPLOYMENT_IDENTITY', 'La clave de estado guardada no corresponde a esta institución y entorno.');
   return value;
@@ -84,6 +89,8 @@ export async function buildSnapshot(tenant, plan, config) {
         plan_version: source.version ?? null },
       backend: tenant.engine === 'cloudformation'
         ? { type: 'cloudformation', region: tenant.region, stack_name: `${base.project_name}-${tenant.tenant_id}-${tenant.env}` }
+        : tenant.engine === 'pulumi'
+        ? { type: 'pulumi', url: pulumiBackendUrl(config, { base: { region: tenant.region } }), stack: `organization/attendance-tenant/${tenant.tenant_id}-${tenant.env}` }
         : { bucket: config.PLATFORM_STATE_BUCKET || config.DEPLOYMENT_STATE_BUCKET || config.IAC_STATE_BUCKET,
           region: config.PLATFORM_STATE_REGION || tenant.region,
           key: `tenants/${tenant.tenant_id}/${tenant.env}/terraform.tfstate`, encrypt: true, use_lockfile: true },
@@ -125,6 +132,10 @@ export function publicDeployment(raw, versions, snapshot, { suspended = false } 
       if (raw.stack_name !== name) throw new Error('Stack identity mismatch');
       outputs.stack_name = name;
       outputs.stack_id = arn.parse(raw.stack_id);
+    }
+    if (snapshot.input.engine === 'pulumi') {
+      if (raw.stack_name !== snapshot.backend.stack) throw new Error('Stack identity mismatch');
+      outputs.stack_name = snapshot.backend.stack;
     }
     const resources = Object.entries(ids).map(([role, id]) => ({ type: 'aws_instance', role, id }));
     if (raw.db_volume_id) {

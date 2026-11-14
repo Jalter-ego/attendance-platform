@@ -108,6 +108,9 @@ export async function runLifecycle(context) {
   let outcome;
   if (config.PLATFORM_DEPLOY_MODE === 'local') {
     outcome = await simulate({ ...options, inventory: local?.inventory });
+  } else if (tenant.engine === 'pulumi') {
+    const { runPulumiLifecycle } = await import('./pulumi-lifecycle.js');
+    outcome = await runPulumiLifecycle(options);
   } else if (tenant.engine === 'cloudformation') {
     const { runCloudFormationLifecycle } = await import('./cloudformation-lifecycle.js');
     outcome = await runCloudFormationLifecycle(options);

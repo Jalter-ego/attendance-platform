@@ -1,0 +1,17 @@
+{
+  "name": "attendance-tenant-pulumi",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "Instalación por tenant con Pulumi (P2, D3): el mismo stack que infra/terraform/tenant.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@pulumi/aws": "7.55.0",
+    "@pulumi/pulumi": "3.276.0"
+  }
+}
