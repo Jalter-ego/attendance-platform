@@ -13,6 +13,7 @@ import { TenantsPage } from './features/tenants/pages/TenantsPage';
 import { CreateTenantPage } from './features/tenants/pages/CreateTenantPage';
 import { TenantDetailPage } from './features/tenants/pages/TenantDetailPage';
 import { BackupsPage } from './features/backups/pages/BackupsPage';
+import { PlansPage } from './features/plans/pages/PlansPage';
 import './App.css';
 
 function RequireAuth() {
@@ -33,6 +34,7 @@ export default function App() {
               <Route path="/tenants/new" element={<CreateTenantPage />} />
               <Route path="/tenants/:id" element={<TenantDetailPage />} />
               <Route path="/backups" element={<BackupsPage />} />
+              <Route path="/plans" element={<PlansPage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/tenants" replace />} />

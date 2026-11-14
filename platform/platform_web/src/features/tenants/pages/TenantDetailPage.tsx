@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { tenantsService } from '../services/tenants.service';
-import { engineNames, planNames } from '../types';
+import { engineNames, planLabel } from '../types';
 import { operationsService } from '../../operations/services/operations.service';
 import { OperationPanel } from '../../operations/components/OperationPanel';
 import { useResource } from '../../../hooks/useResource';
@@ -106,7 +106,10 @@ export function TenantDetailPage() {
           <dl>
             <div>
               <dt>Plan</dt>
-              <dd>{data.plan_snapshot?.name ?? planNames[data.plan] ?? data.plan}</dd>
+              <dd>
+                {planLabel(data)}
+                {data.plan_snapshot && ` · v${data.plan_snapshot.version}`}
+              </dd>
             </div>
             <div>
               <dt>Motor</dt>

@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../auth/hooks/useAuth';
 import { useResource } from '../../../hooks/useResource';
 import { tenantsService } from '../services/tenants.service';
-import { planNames } from '../types';
+import { planLabel } from '../types';
 import { Icon } from '../../../components/Icon';
 import { StatusBadge } from '../../../components/StatusBadge';
 
@@ -161,7 +161,7 @@ export function TenantsPage() {
                         </span>
                       </Link>
                     </td>
-                    <td>{tenant.plan_snapshot?.name ?? planNames[tenant.plan] ?? tenant.plan}</td>
+                    <td>{planLabel(tenant)}</td>
                     <td>
                       <span className="environment-label">
                         {tenant.env === 'test' ? 'Pruebas' : 'Producción'}

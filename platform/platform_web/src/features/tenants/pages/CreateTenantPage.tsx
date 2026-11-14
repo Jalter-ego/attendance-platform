@@ -39,7 +39,8 @@ const TIMEZONES = [
   'America/Mexico_City',
   'UTC',
 ];
-const PLAN_COPY: Record<Tenant['plan'], string> = {
+// Respaldo si un plan no trae descripción (la edita P4 en la pantalla Planes).
+const PLAN_COPY: Record<string, string> = {
   basic: 'Para instituciones pequeñas',
   standard: 'Para instituciones en crecimiento',
   advanced: 'Para alta demanda',
