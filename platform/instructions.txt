@@ -1,2 +1,0 @@
-aqui en esta carpeta deberian ir los 2 proyectos
-backend y fronted para la plataforma administradora de los tenant

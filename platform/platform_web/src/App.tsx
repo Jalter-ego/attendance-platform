@@ -1,0 +1,41 @@
+import {
+  BrowserRouter,
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+} from 'react-router-dom';
+import { AuthProvider } from './features/auth/context/AuthProvider';
+import { useAuth } from './features/auth/hooks/useAuth';
+import { LoginPage } from './features/auth/pages/LoginPage';
+import { PlatformLayout } from './components/PlatformLayout';
+import { TenantsPage } from './features/tenants/pages/TenantsPage';
+import { RegisterTenantPage } from './features/tenants/pages/RegisterTenantPage';
+import { TenantDetailPage } from './features/tenants/pages/TenantDetailPage';
+import './App.css';
+
+function RequireAuth() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="screen-state">Cargando plataforma…</div>;
+  return user ? <Outlet /> : <Navigate to="/login" replace />;
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route element={<RequireAuth />}>
+            <Route element={<PlatformLayout />}>
+              <Route path="/tenants" element={<TenantsPage />} />
+              <Route path="/tenants/new" element={<RegisterTenantPage />} />
+              <Route path="/tenants/:id" element={<TenantDetailPage />} />
+            </Route>
+          </Route>
+          <Route path="*" element={<Navigate to="/tenants" replace />} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}

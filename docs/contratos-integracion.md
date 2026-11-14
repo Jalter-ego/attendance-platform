@@ -55,6 +55,12 @@ Para Terraform/OpenTofu se utiliza el workspace `default`; la separación se hac
 
 Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El responsable confirmó que el equipo ya dispone de acceso administrador. Cada clon configura su perfil AWS autorizado; las credenciales y la configuración `.terraform/` se mantienen fuera del repositorio. Los perfiles IAM de las EC2 siguen siendo identidades de servicio distintas de las cuentas del equipo.
 
+## Suspensión y reanudación (P1/P2/P6)
+
+El módulo Terraform recibe `suspended` (booleano, predeterminado `false`) y entrega ese mismo campo en los outputs. P2 debe conservarlo en la configuración del despliegue: `true` solicita detener las tres EC2; `false`, arrancarlas. Son cambios de estado sin eliminar recursos. El primer despliegue se crea con `false`; P6 solo debe permitir suspender después de completar el arranque. Mientras esté suspendido, se permiten reanudar y eliminar; los cambios de AMI, cloud-init o tamaños deben esperar a reanudar.
+
+`outputs.urls` mantiene `frontend`, `api`, `frontend_health` y `backend_health` con valores `null` durante la suspensión. Al reanudar, el módulo consulta la IP pública posterior al arranque: P2/P6 deben reemplazar las URLs guardadas con los nuevos outputs y comprobar ambos health checks. No asumir que la URL anterior seguirá vigente. `suspended=false` describe el estado solicitado de EC2, no la disponibilidad de Attendance. Las pruebas simuladas cubren el ciclo; la conservación de datos y la recuperación de servicios deben verificarse también en AWS.
+
 ## Secretos y arranque
 
 - Prefijo SSM por cliente: `/tenants/<tenant_id>/<env>/`.
@@ -66,6 +72,30 @@ Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El respons
 - Orden: EBS → DB → adjuntar disco → backend con IP privada de DB → frontend con IP privada de backend. El frontend usa nginx como proxy; API/DB no tienen IP pública. No se considera listo un tenant hasta superar los health checks de P4.
 - Los tres IDs de AMI se fijan por despliegue; se validan cuenta/región, estado disponible, arquitectura x86_64 y etiqueta `Role`. El catálogo inicial debe usar los tamaños t3 admitidos por el módulo. P3 debe confirmar con P1/P4 los nombres y tamaños antes de integrar el PR.
 - Integración actual: **usar las AMIs 0.2.1** (`infra/packer/ami-ids.json`, `us-east-2`): frontend `ami-0d412bf8398fbd92c`, backend `ami-05a6938836e6a1e47`, db `ami-080f8162d591c0a9a`, monitoring `ami-090eae31d76378997`. Prueba funcional con este módulo: los tres roles arrancan `ready`, health 200, login del admin inicial y respaldo/restauración verificados. No usar 0.1.0, 0.1.1 ni 0.2.0 (eliminadas por fallos de arranque); la 0.1.2 funciona pero no trae respaldos y se eliminará.
+
+## Administrador inicial y variables de P4
+
+Para el desarrollo local del backend, copiar los nombres de `attendance_core/.env.example` a su `.env` y completar `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD`. Después de migrar una base nueva, ejecutar `pnpm instance:bootstrap`. El password requiere al menos 12 caracteres y como máximo 72 bytes UTF-8; no se cambia si ya existe un owner activo. El bootstrap no se ejecuta automáticamente al arrancar la API.
+
+En AWS, `boot_backend` ya proporciona esas tres variables solo al ejecutar `scripts/bootstrap.cjs`:
+
+| Variable del script | Origen en la plataforma/Ansible |
+| --- | --- |
+| `BOOTSTRAP_ADMIN_NAME` | `Administrador <institution_name>` |
+| `BOOTSTRAP_ADMIN_EMAIL` | `admin_email`, que recibe `contact_email` del tenant |
+| `BOOTSTRAP_ADMIN_PASSWORD` | `admin_password`, leído de `/tenants/<id>/<env>/admin_password` en SSM SecureString |
+
+P6 genera la contraseña antes del despliegue; no se incorpora como valor al tfstate ni al repositorio. El contrato de arranque actual pide secretos alfanuméricos. Estas variables crean al primer owner; no sustituyen `INSTITUTION_NAME` ni los límites del plan.
+
+Para P4, el mapa de entrada debe usar estos nombres:
+
+```json
+{ "limits": { "max_students": 100, "max_teachers": 10, "max_courses": 20 } }
+```
+
+La plantilla de entorno lo convierte en `PLAN_MAX_STUDENTS`, `PLAN_MAX_TEACHERS` y `PLAN_MAX_COURSES`. Son enteros positivos opcionales; para dejar un recurso sin límite se omite su clave. `TENANT_ENV` controla los endpoints de demo (`test` habilita, `prod` deshabilita) y `TENANT_PLAN` identifica el plan. Siguen siendo metadatos de una instalación independiente.
+
+P4 incorporó `/core/api/v1/metrics`. P5 debe consultarlo directamente por la IP privada del backend y puerto 5000, permitido desde el SG de monitoreo. El controlador rechaza solicitudes con `X-Forwarded-For`, incluido el tráfico que llega por nginx. La AMI backend 0.2.1 fue creada antes del merge `ecf3f46` de P4; hay que reconstruirla para exponer esas métricas y los límites nuevos. P4 compila y sus 57 pruebas pasan; en revisión adicional se reprodujo que dos altas simultáneas pueden superar los límites de usuarios/cursos, pendiente de serializar en el backend.
 
 ## Puertos que deben conservarse
 
@@ -81,7 +111,7 @@ Terraform >= 1.10 y OpenTofu >= 1.10 admiten el bloqueo nativo de S3. El respons
 | Prometheus | 9090 | Grafana y administración autorizada |
 | Grafana | 3000 | Administración autorizada |
 
-Health del backend actual: `/core/api/v1/health`. La ruta de métricas y su acceso los coordinan P4/P5. La base mantiene SSH/Grafana cerrados por defecto y el endpoint SSM de Parameter Store ya está creado. Los SG por tenant se crean al aplicar su módulo; falta la prueba funcional de un tenant. La base ya tiene aplicados el acceso S3 y los canales del agente SSM para respaldos vía Run Command en DB (PR #5), probados con las AMIs 0.2.1. Backend/BD continúan sin salida general a Internet.
+Health del backend actual: `/core/api/v1/health`; métricas de P4: `/core/api/v1/metrics`. La base mantiene SSH/Grafana cerrados por defecto y el endpoint SSM de Parameter Store ya está creado. Los SG por tenant se crean al aplicar su módulo; P3 reportó la prueba funcional con 0.2.1 y falta repetir la integración al reconstruir el backend con P4. La base ya tiene aplicados el acceso S3 y los canales del agente SSM para respaldos vía Run Command en DB (PR #5), probados por P3 con las AMIs 0.2.1. Backend/BD continúan sin salida general a Internet.
 
 Para la extensión de respaldos, P2/P4/P6 pasan `backup={schedule,retention_days}` y `base.backups_bucket`; vacío mantiene la función desactivada. La etiqueta DLM del volumen y del selector es `BackupPolicy=<project_name>:<schedule>-<retention_days>d`. No usar varias etiquetas de destino para simular un AND: DLM las combina con OR. Requiere las AMIs 0.2.1 (las 0.1.2 no contienen los scripts). Prueba de restauración superada: respaldo → borrar un dato → restore → el dato vuelve. Uso desde el worker: `infra/backups/tenant-backup.sh backup|restore|list|prune`. El bucket de respaldos es distinto del bucket del tfstate.
 
