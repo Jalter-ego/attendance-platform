@@ -112,7 +112,9 @@ platform_web/src/
 - **P2:** integrar su wizard sobre el registro inicial y conectar los adaptadores al worker. Registrar no equivale a aprovisionar. Mantener el bloqueo por tenant y usar su `tenant_id` + `env` para localizar el estado de IaC.
 - **P1:** integrar suspensión/reanudación, vista previa y confirmación de eliminación cuando exista el ejecutor real.
 - **P3/P4/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`. El catálogo inicial se consulta desde la API; P4 puede ampliarlo mediante nuevas migraciones y sus endpoints.
-- **P6:** completar generación de secretos en SSM, ejecución de motores con timeout/logs, health checks y persistencia de deployments/outputs/versiones. La redacción incluida sirve para eventos; el streaming seguro de procesos externos sigue pendiente.
+- **P6:** conectar el ejecutor y el servicio SSM al flujo de creación de P2; completar health checks y persistencia de deployments/outputs/versiones.
+
+H4/H5 ya tienen un [ejecutor común de procesos](platform_api/src/worker/README.md), integrado a los respaldos: progreso filtrado, timeout, cancelación del árbol de procesos y errores legibles. La cancelación se detecta también mientras el comando permanece en silencio. Hay además un servicio SSM que prepara los tres secretos por tenant y conserva los existentes al reintentar. P2 debe conectar ambos al handler de creación; aún faltan los motores, health checks y guardar los outputs/versiones del despliegue. No hay migraciones nuevas en este bloque.
 
 Las tablas iniciales son `users`, `sessions`, `plans`, `tenants`, `operations`, `operation_events` y `deployments`. Las contraseñas se guardan con scrypt; en sesiones solo se conserva el hash del token. No hay registro público de usuarios. Se contempla `tenant_admin` para lectura limitada a su institución; falta su pantalla/flujo de alta. Auditoría, alertas y escáneres se integrarán en sus bloques respectivos. RF-04/05/06/15/19/20 siguen siendo opcionales.
 
@@ -155,7 +157,7 @@ Entrada de registro:
 
 Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Todavía no se implementaron las rutas reales de crear infraestructura, suspender, reanudar o eliminar. Respaldar y restaurar ya funcionan: ver [Respaldos](#respaldos-p3).
 
-La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo. Se admite cancelar y reintentar el diagnóstico; el reintento de IaC deberá reconciliar el estado existente antes de ejecutar de nuevo.
+La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo y consulta la cancelación aunque no haya logs. Al perder la propiedad, se detiene el proceso local sin sobrescribir al nuevo dueño. Se admite cancelar y reintentar el diagnóstico y los respaldos; el reintento de IaC deberá reconciliar el estado existente antes de ejecutar de nuevo.
 
 ## Respaldos (P3)
 
@@ -176,15 +178,9 @@ cd platform/platform_api
 pnpm test
 ```
 
-Para integración usa una base **desechable cuyo nombre empiece por `platform_test`**. La prueba elimina sus tablas; no carga `.env` y exige `TEST_DATABASE_URL` explícita. Por ejemplo, con el PostgreSQL local del compose, desde la raíz:
+La suite actual contiene 33 pruebas: ejecutor de procesos, filtrado de secretos, respaldos de P3, cancelación/propiedad del worker y preparación de SSM. Usa procesos ficticios, un doble de conexión y un cliente SSM simulado; no carga `.env`, no conecta a AWS ni modifica PostgreSQL. Incluye hijos que ignoran SIGTERM, cancelación sin logs, fallo parcial de secretos y reintentos sin cambiar credenciales. Ver [el contrato del ejecutor y las pruebas](platform_api/src/worker/README.md).
 
-```bash
-docker compose -f platform/compose.yaml exec postgres createdb -U attendance platform_test
-cd platform/platform_api
-TEST_DATABASE_URL=postgresql://attendance:attendance_local@127.0.0.1:5433/platform_test pnpm test:integration
-```
-
-Siete pruebas unitarias y diez de integración verificadas con PostgreSQL 16: sesiones persistentes, logout/expiración, bootstrap repetible, permisos entre instituciones, validación, peticiones/workers simultáneos, eventos por cursor, cancelación y recuperación/reintento de trabajos interrumpidos.
+La comprobación de SQL, sesiones y permisos contra PostgreSQL real requiere su propia prueba de integración; el script `test:integration` no está disponible en este checkout. No ejecutar pruebas destructivas sobre la base de Supabase usada por el equipo.
 
 Frontend, desde `platform/platform_web/`:
 

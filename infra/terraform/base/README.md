@@ -93,6 +93,8 @@ Comparte este mismo bloque con quien aplique la base: todos administran el mismo
 
 P5 recibe ese archivo y configura el descubrimiento EC2 por etiquetas, los scrapes, el datasource local `http://127.0.0.1:9090`, dashboards y alertas. La AMI solo trae una configuración inicial de Prometheus que se consulta a sí mismo; crear la EC2 no significa que ya se estén monitoreando los tenants. Después del apply, comprobar SSM `Online`, servicios y salud de Grafana/Prometheus antes de dar A5/P5 por integrado.
 
+Grafana tiene su propio login: el primer acceso es con usuario `admin` y contraseña `admin`, y solicita cambiarla. Si otro integrante ya la cambió, se usa esa contraseña; no son las credenciales del login de la plataforma. Ver [el acceso inicial documentado por Grafana](https://grafana.com/docs/grafana/latest/setup-grafana/sign-in-to-grafana/).
+
 Verificación del 14/11/2026: plan revisado de 2 altas, 0 modificaciones y 0 eliminaciones aplicado; agente SSM Online, cloud-init terminado, Prometheus ready y Grafana con database=ok comprobados dentro de la EC2. El plan posterior dio No changes. Falta configurar observabilidad con P5 y autorizar las IPs de acceso; los outputs locales ya están actualizados.
 
 ## Actualización de respaldos (PR #5)

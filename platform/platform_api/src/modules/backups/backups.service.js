@@ -1,8 +1,7 @@
 // Respaldos de tenants (P3). Ejecuta infra/backups/tenant-backup.sh, que usa AWS CLI con las
 // credenciales del proceso (perfil/variables de AWS del worker): dump en la VM db por SSM Run
 // Command + snapshot EBS, restauración y listado. La última línea de su salida es JSON.
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { runCommand, CommandError } from '../../worker/services/command-runner.js';
 import { z } from 'zod';
 import { HttpError } from '../../lib/errors.js';
 import { getTenant } from '../tenants/tenants.service.js';
@@ -16,135 +15,51 @@ export const backupIdInput = z.union([
 // Error con un mensaje apto para mostrar en la operación.
 export class ScriptError extends Error {}
 
-// El script no necesita la base ni los secretos de la plataforma.
-function childEnv() {
-  // AWS CLI en Windows escribe con la página de códigos del sistema; se pide UTF-8.
-  const env = {
-    ...process.env,
-    MSYS_NO_PATHCONV: '1',
-    AWS_CLI_OUTPUT_ENCODING: 'UTF-8',
-  };
-  for (const key of Object.keys(env))
-    if (/^(DATABASE_URL|DB_|BOOTSTRAP_ADMIN_)/.test(key)) delete env[key];
-  return env;
-}
-
-export function runBackupScript(
+// Reutiliza el ejecutor del worker; conserva el contrato de P3 y su JSON final.
+export async function runBackupScript(
   config,
   command,
   tenant,
   { backupId, onLine = () => {}, signal, timeoutMs } = {},
 ) {
   const args = [
-    config.BACKUP_SCRIPT.replaceAll('\\', '/'),
-    command,
-    '--tenant',
-    tenant.tenant_id,
-    '--env',
-    tenant.env,
-    '--region',
-    tenant.region,
-    '--timeout',
-    String(config.BACKUP_TIMEOUT_S),
+    config.BACKUP_SCRIPT.replaceAll('\\', '/'), command,
+    '--tenant', tenant.tenant_id, '--env', tenant.env, '--region', tenant.region,
+    '--timeout', String(config.BACKUP_TIMEOUT_S),
   ];
   if (backupId) args.push('--id', backupId);
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let lastJson = null;
-    let lastError = '';
-    let chain = Promise.resolve();
-    let failure = null;
-    const child = spawn(config.BACKUP_BASH, args, {
-      env: childEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-    const stop = (error) => {
-      if (!failure) failure = error;
-      if (child.exitCode !== null || child.pid === undefined) return;
-      // En Windows, matar bash.exe deja vivos a sus hijos (aws, sleep) y la operación
-      // seguiría esperando: se termina el árbol completo.
-      if (process.platform === 'win32')
-        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-          stdio: 'ignore',
-          windowsHide: true,
-        }).on('error', () => child.kill());
-      else child.kill();
-    };
-    const timer = setTimeout(
-      () =>
-        stop(
-          new ScriptError(
-            `tenant-backup.sh superó el tiempo máximo (${Math.round((timeoutMs ?? config.BACKUP_TIMEOUT_S * 1000 + 60000) / 1000)} s).`,
-          ),
-        ),
-      timeoutMs ?? config.BACKUP_TIMEOUT_S * 1000 + 60000,
-    );
-    const onAbort = () => stop(signal.reason ?? new Error('Aborted'));
-    signal?.addEventListener('abort', onAbort, { once: true });
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      if (error) reject(error);
-      else resolve(value);
-    };
-    const read = (stream, name) =>
-      createInterface({ input: stream }).on('line', (raw) => {
-        const line = raw.trimEnd();
-        if (!line) return;
-        if (name === 'stdout' && line.startsWith('{')) {
-          try {
-            lastJson = JSON.parse(line);
-          } catch {
-            /* línea de progreso que empieza con "{" */
-          }
-        }
-        if (name === 'stderr' && line.startsWith('ERROR:'))
+  let lastError = '';
+  let stdout;
+  try {
+    ({ stdout } = await runCommand({
+      command: config.BACKUP_BASH,
+      args,
+      env: { MSYS_NO_PATHCONV: '1', AWS_CLI_OUTPUT_ENCODING: 'UTF-8' },
+      signal,
+      timeoutMs: timeoutMs ?? config.BACKUP_TIMEOUT_S * 1000 + 60000,
+      killGraceMs: 1000,
+      captureStdout: true,
+      onLine: (line, stream) => {
+        if (stream === 'stderr' && line.startsWith('ERROR:'))
           lastError = line.slice(6).trim();
-        // Los callbacks se encadenan para conservar el orden de los eventos.
-        chain = chain
-          .then(() => (failure ? undefined : onLine(line, name)))
-          .catch(stop);
-      });
-    read(child.stdout, 'stdout');
-    read(child.stderr, 'stderr');
-    child.on('error', (error) =>
-      stop(
-        error.code === 'ENOENT'
-          ? new ScriptError(
-              `No se encontró bash en "${config.BACKUP_BASH}". Configura BACKUP_BASH.`,
-            )
-          : error,
-      ),
-    );
-    // Si se cortó a propósito no se espera a que se cierren las tuberías: con Git Bash el
-    // comando hijo en curso (aws, sleep) no cuelga del árbol de Windows y las mantiene
-    // abiertas unos segundos. Muerto bash, no se ejecuta ningún paso más del script.
-    child.on('exit', () => {
-      if (!failure) return;
-      child.stdout.destroy();
-      child.stderr.destroy();
-      void chain.then(() => finish(failure));
-    });
-    child.on('close', (code) => {
-      void chain.then(() => {
-        if (failure) return finish(failure);
-        if (code !== 0)
-          return finish(
-            new ScriptError(
-              lastError || `tenant-backup.sh terminó con código ${code}.`,
-            ),
-          );
-        if (!lastJson)
-          return finish(
-            new ScriptError('tenant-backup.sh no devolvió un resultado.'),
-          );
-        finish(null, lastJson);
-      });
-    });
-  });
+        return onLine(line, stream);
+      },
+    }));
+  } catch (error) {
+    if (!(error instanceof CommandError) || error.code === 'COMMAND_CANCELLED') throw error;
+    throw new ScriptError(error.code === 'COMMAND_NOT_FOUND'
+      ? 'No se encontró bash. Configura BACKUP_BASH y revisa su instalación.'
+      : error.code === 'COMMAND_FAILED' && lastError ? lastError : error.message);
+  }
+  let result;
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.startsWith('{')) continue;
+    try { result = JSON.parse(line); }
+    catch { /* Las líneas de progreso pueden empezar con una llave. */ }
+  }
+  if (!result || typeof result !== 'object' || Array.isArray(result))
+    throw new ScriptError('tenant-backup.sh no devolvió un resultado válido.');
+  return result;
 }
 
 // Une dumps (S3) y snapshots (EBS) por backup_id. Los snapshots programados de DLM no
