@@ -22,6 +22,8 @@ import {
   retryOperation,
 } from './modules/operations/operations.service.js';
 import { listBackups } from './modules/backups/backups.service.js';
+import { ENGINES } from './engines/adapter.js';
+import { BACKUP_BY_PLAN } from './engines/tenant-input.js';
 
 export function createApp({ pool, config }) {
   const app = express();
@@ -111,7 +113,17 @@ export function createApp({ pool, config }) {
         await pool.query(
           "SELECT * FROM plans ORDER BY (sizing->>'db_disk_gb')::int",
         )
-      ).rows,
+      ).rows.map((plan) => ({
+        ...plan,
+        // P2: respaldo que aplica el motor según el plan (variable "backup" del módulo).
+        backup: BACKUP_BY_PLAN[plan.code] ?? null,
+      })),
+    }),
+  );
+  // P2: motores del selector del wizard y si ya tienen adaptador conectado al worker.
+  api.get('/engines', (_request, response) =>
+    response.json({
+      items: Object.entries(ENGINES).map(([code, engine]) => ({ code, ...engine })),
     }),
   );
   api.get('/tenants', async (request, response) =>

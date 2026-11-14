@@ -10,7 +10,7 @@ import { useAuth } from './features/auth/hooks/useAuth';
 import { LoginPage } from './features/auth/pages/LoginPage';
 import { PlatformLayout } from './components/PlatformLayout';
 import { TenantsPage } from './features/tenants/pages/TenantsPage';
-import { RegisterTenantPage } from './features/tenants/pages/RegisterTenantPage';
+import { CreateTenantPage } from './features/tenants/pages/CreateTenantPage';
 import { TenantDetailPage } from './features/tenants/pages/TenantDetailPage';
 import { BackupsPage } from './features/backups/pages/BackupsPage';
 import './App.css';
@@ -30,7 +30,7 @@ export default function App() {
           <Route element={<RequireAuth />}>
             <Route element={<PlatformLayout />}>
               <Route path="/tenants" element={<TenantsPage />} />
-              <Route path="/tenants/new" element={<RegisterTenantPage />} />
+              <Route path="/tenants/new" element={<CreateTenantPage />} />
               <Route path="/tenants/:id" element={<TenantDetailPage />} />
               <Route path="/backups" element={<BackupsPage />} />
             </Route>

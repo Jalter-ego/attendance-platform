@@ -1,0 +1,337 @@
+/* Wizard "Crear tenant" (P2). Reutiliza .panel, .form-grid, .button y .alert de App.css. */
+.wizard-steps {
+  display: flex;
+  gap: 12px;
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+.wizard-steps li {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.wizard-steps li:not(:last-child)::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.wizard-steps .step-dot {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #cfdcd5;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  background: #fff;
+}
+.wizard-steps li.current {
+  color: #243a35;
+  font-weight: 600;
+}
+.wizard-steps li.current .step-dot,
+.wizard-steps li.done .step-dot {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.wizard-counter {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin: 0 0 18px;
+}
+.wizard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 22px;
+  align-items: start;
+}
+.wizard-main {
+  padding: 28px;
+}
+.wizard-main h2 {
+  margin-bottom: 4px;
+}
+.wizard-main > section > .muted {
+  font-size: 0.75rem;
+  margin: 0 0 18px;
+}
+.wizard-section {
+  border-top: 1px solid var(--border);
+  margin-top: 28px;
+  padding-top: 26px;
+}
+.form-grid.two-inline {
+  gap: 14px;
+}
+.field-help,
+.field-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.68rem;
+  font-weight: 400;
+}
+.field-help {
+  color: var(--muted);
+}
+.field-error {
+  color: #a65040;
+}
+.wizard input[aria-invalid='true'] {
+  border-color: #d99a87;
+}
+
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.plan-card,
+.engine-option,
+.provision-toggle {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.plan-card input,
+.engine-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.plan-card.selected,
+.engine-option.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+  background: #f6faf8;
+}
+.plan-card:focus-within,
+.engine-option:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.plan-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+.plan-card ul {
+  margin: 8px 0 0;
+  padding: 10px 0 0 16px;
+  border-top: 1px solid #eef2ef;
+  color: #4f625b;
+  line-height: 1.8;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e2f1ea;
+  color: var(--primary-dark);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.badge.muted-badge {
+  align-self: flex-start;
+  background: #f1f3f2;
+  color: var(--muted);
+}
+
+.engine-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.engine-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.engine-option > span > strong {
+  font-size: 0.82rem;
+}
+
+.resource-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+.resource-table th,
+.resource-table td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid #eef2ef;
+}
+.resource-table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+.wizard-facts dd {
+  overflow-wrap: anywhere;
+}
+.create-list {
+  margin: 0 0 18px;
+  padding-left: 18px;
+  font-size: 0.77rem;
+  line-height: 1.9;
+}
+.provision-toggle {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+}
+.provision-toggle > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.provision-toggle.disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+.text-link.as-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-top: 14px;
+  cursor: pointer;
+}
+
+.wizard-summary {
+  padding: 22px;
+  position: sticky;
+  top: 20px;
+}
+.wizard-summary h2 {
+  margin-bottom: 2px;
+}
+.wizard-summary > .muted {
+  font-size: 0.7rem;
+  margin: 0 0 14px;
+}
+.wizard-summary h3 {
+  font-size: 0.74rem;
+  margin: 18px 0 8px;
+}
+.summary-institution {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8faf9;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.summary-row strong {
+  color: #243a35;
+  text-align: right;
+}
+.summary-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 0.72rem;
+  line-height: 1.9;
+  color: #4f625b;
+}
+.summary-safe {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f1f6ee;
+  color: #58725f;
+  font-size: 0.7rem;
+}
+.summary-safe svg {
+  flex: none;
+  margin-top: 1px;
+}
+.panel.wizard-summary > .alert {
+  margin: 16px 0 0;
+}
+.alert.warning {
+  color: #8a6420;
+  background: #fff8e8;
+  border: 1px solid #f2e3bf;
+  margin-bottom: 0;
+}
+
+.wizard-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding-top: 4px;
+}
+.wizard-footer > .muted {
+  font-size: 0.72rem;
+}
+.wizard-footer > div {
+  display: flex;
+  gap: 12px;
+}
+
+@media (max-width: 1100px) {
+  .wizard {
+    grid-template-columns: 1fr;
+  }
+  .wizard-summary {
+    position: static;
+  }
+}
+@media (max-width: 760px) {
+  .wizard-main {
+    padding: 20px;
+  }
+  .plan-cards,
+  .engine-options {
+    grid-template-columns: 1fr;
+  }
+  .wizard-steps li > span:last-child {
+    display: none;
+  }
+  .wizard-steps li.current > span:last-child {
+    display: inline;
+  }
+  .wizard-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .wizard-footer > .muted {
+    display: none;
+  }
+  .wizard-footer > div > * {
+    flex: 1;
+    justify-content: center;
+  }
+}
