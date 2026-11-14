@@ -31,6 +31,7 @@ Los commits y PRs llevan el autor real.
 | Conexión al worker | `src/modules/provisioning/`: operaciones `create`, `suspend`, `resume` y `destroy` en la cola de P6 (migración `003_engines.sql`), con estados del tenant, health checks después del apply, reintento sin duplicar (RF-12) y confirmación al eliminar (RF-18). |
 | Errores comprensibles (RF-11) | Los comandos corren con el ejecutor común de P6 (`worker/services/command-runner.js`). `src/engines/errors.js` traduce los errores conocidos (bloqueo, credenciales, cuota de vCPU, AMIs, permisos, bucket) a partir de stderr. Cancelar desde la UI no corta un `apply` a medias; perder la operación sí lo detiene. |
 | Secretos | El handler `create` llama al servicio SSM de P6 (`worker/services/tenant-secrets.js`) antes del primer apply; los eventos solo muestran nombres. |
+| **Wizard Crear tenant** (RF-03, RF-07) | `platform_web/src/features/tenants/pages/CreateTenantPage.tsx`, en `/tenants/new` y basado en el mockup del PDF:<br>• **Datos y plan:** tarjetas de plan con límites y respaldo, selector de motor, e identificador generado desde el nombre.<br>• **Configuración:** zona horaria, servidores con sus tamaños, límites y respaldo.<br>• **Revisión:** lo que se creará en AWS, con opción de crear la infraestructura al confirmar.<br>• Resumen lateral en vivo y validación por paso. Los motores sin adaptador quedan como "solo registro".<br>API: `GET /engines` y `backup` en `GET /plans`. Reemplaza al formulario de registro anterior. |
 | **D7** Registro de versiones (RF-13) | Cada despliegue guarda en `deployments` el motor y su versión, el proveedor AWS, la versión y el commit de las AMIs, el commit de las plantillas, las AMIs, los recursos y los outputs. Se ve en el panel **Infraestructura** del detalle del tenant. |
 
 ### Cómo lo verifiqué
@@ -43,12 +44,20 @@ Los commits y PRs llevan el autor real.
   - `destroy` rechazado sin confirmación y aceptado con ella.
 - Terraform 1.16.6 real (sin AWS) acepta las variables que genera el adaptador con el módulo copiado (`validate` y `console`), incluida la plantilla cloud-init por ruta absoluta.
 - `pnpm lint` y `pnpm build` del frontend.
+- Wizard recorrido en Edge con Playwright, contra la API y PostgreSQL reales:
+  - validación por paso;
+  - identificador sin tildes (`Colegio Simón Bolívar` → `colegio-simon-bolivar`);
+  - el resumen refleja el plan;
+  - con Terraform, crear deja la operación `create` en cola;
+  - con CloudFormation, solo registra;
+  - un identificador repetido muestra el error de la API;
+  - a 390 px no hay scroll horizontal.
 
 Pendiente de probar en AWS: crear un tenant real desde la plataforma (requiere `IAC_STATE_BUCKET` y los outputs de la base) y OpenTofu con el CLI instalado.
 
 ### Pendiente
 
-Wizard de 3 pasos (RF-03/07), Pulumi (D3), CloudFormation (D4/D5), comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1).
+Pulumi (D3), CloudFormation (D4/D5), comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1).
 
 ### Qué defiendo en el video
 

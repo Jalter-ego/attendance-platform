@@ -31,6 +31,15 @@ export interface TenantDetail extends Tenant {
 export interface Plan {
   code: Tenant['plan'];
   name: string;
+  sizing: { frontend: string; backend: string; db: string; db_disk_gb: number };
+  limits: { max_students?: number; max_teachers?: number; max_courses?: number };
+  backup: { schedule: 'weekly' | 'daily'; retention_days: number } | null;
+}
+
+export interface Engine {
+  code: Tenant['engine'];
+  label: string;
+  available: boolean;
 }
 export const planNames = {
   basic: 'Básico',
