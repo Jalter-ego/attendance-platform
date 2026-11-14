@@ -7,16 +7,14 @@
 //
 // Los procesos se ejecutan con el ejecutor común de P6 (worker/services/command-runner.js):
 // argumentos separados, logs filtrados, timeout y cancelación del árbol de procesos.
-import { execFile } from 'node:child_process';
 import { copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
-import { promisify } from 'node:util';
 import { runCommand } from '../worker/services/command-runner.js';
 import { OperationCancelled, OperationError } from '../worker/errors.js';
 import { explainEngineError } from './errors.js';
 import { engineResult } from './result.js';
+import { imageVersions, templatesCommit } from './versions.js';
 
-const exec = promisify(execFile);
 const LOCK_TIMEOUT = '-lock-timeout=5m';
 const PROVIDER_KEYS = [
   'registry.terraform.io/hashicorp/aws',
@@ -322,20 +320,11 @@ export function createTerraformAdapter(config, engine) {
       toolVersions[engine] = null;
     }
     // Commit de las plantillas usadas (módulo + cloud-init); "-dirty" si hay cambios locales.
-    try {
-      const cwd = config.IAC_MODULE_DIR;
-      const { stdout: commit } = await exec('git', ['rev-parse', '--short', 'HEAD'], { cwd });
-      const { stdout: dirty } = await exec(
-        'git',
-        ['status', '--porcelain', '--', '.', dirname(config.IAC_CLOUD_INIT_TEMPLATE)],
-        { cwd },
-      );
-      toolVersions.templates_commit = `${commit.trim()}${dirty.trim() ? '-dirty' : ''}`;
-    } catch {
-      toolVersions.templates_commit = null;
-    }
-    toolVersions.image_version = ctx.input.image?.version ?? null;
-    toolVersions.image_git_commit = ctx.input.image?.git_commit ?? null;
+    toolVersions.templates_commit = await templatesCommit(config.IAC_MODULE_DIR, [
+      '.',
+      dirname(config.IAC_CLOUD_INIT_TEMPLATE),
+    ]);
+    Object.assign(toolVersions, imageVersions(ctx.input));
     toolVersions.module = 'infra/terraform/tenant';
     return toolVersions;
   }

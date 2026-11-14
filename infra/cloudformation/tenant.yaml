@@ -1,0 +1,374 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Attendance - instalacion de un tenant (P2, D4). Mismo stack que infra/terraform/tenant:
+  frontend, backend y base de datos en EC2 desde las AMIs de Packer, SG por rol, EBS de
+  datos cifrado e IAM limitado al prefijo SSM del tenant. Un stack por tenant y entorno.
+  La red, el bucket de respaldos y el monitoreo vienen de infra/terraform/base.
+
+Parameters:
+  ProjectName:
+    Type: String
+    AllowedPattern: "^[a-z][a-z0-9-]{2,39}$"
+  TenantId:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$"
+    ConstraintDescription: 3-40 minusculas, numeros o guiones, sin guion inicial/final.
+  Env:
+    Type: String
+    AllowedValues: [test, prod]
+  Timezone:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9_+/-]+$"
+  # Identidad del tenant para cloud-init, ya serializada como pares JSON por el adaptador
+  # (nombre, correo, limites, respaldo...). No contiene secretos.
+  BootIdentityJson:
+    Type: String
+    MaxLength: 4000
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetId:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnetId:
+    Type: AWS::EC2::Subnet::Id
+  MonitoringSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  BackupsBucket:
+    Type: String
+    Default: ""
+    Description: Vacio desactiva respaldos y permisos de actualizacion por S3/SSM.
+  BackupPolicyTag:
+    Type: String
+    Default: ""
+    Description: Etiqueta DLM del volumen de datos (proyecto:frecuencia-dias).
+  FrontendAmi:
+    Type: AWS::EC2::Image::Id
+  BackendAmi:
+    Type: AWS::EC2::Image::Id
+  DbAmi:
+    Type: AWS::EC2::Image::Id
+  FrontendInstanceType:
+    Type: String
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+  BackendInstanceType:
+    Type: String
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+  DbInstanceType:
+    Type: String
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+  DbDiskGb:
+    Type: Number
+    MinValue: 10
+
+Conditions:
+  HasBackups: !Not [!Equals [!Ref BackupsBucket, ""]]
+
+Resources:
+  # Disco raiz cifrado de 12 GiB e IMDSv2 obligatorio (AWS::EC2::Instance no expone
+  # MetadataOptions; se aplican con una plantilla de lanzamiento compartida).
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeType: gp3
+              VolumeSize: 12
+              Encrypted: true
+              DeleteOnTermination: true
+
+  # ---------------------------------------------------------------- Seguridad
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Attendance ${TenantId}/${Env}: frontend"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { Description: Navegador hacia nginx, IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 9100, ToPort: 9100, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 9256, ToPort: 9256, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 8889, ToPort: 8889, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 19999, ToPort: 19999, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-${TenantId}-${Env}-frontend" }
+        - { Key: Role, Value: frontend }
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Attendance ${TenantId}/${Env}: backend"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { Description: Solo el proxy de este tenant, IpProtocol: tcp, FromPort: 5000, ToPort: 5000, SourceSecurityGroupId: !Ref FrontendSecurityGroup }
+        - { Description: Monitoreo de la API, IpProtocol: tcp, FromPort: 5000, ToPort: 5000, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 9100, ToPort: 9100, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 9256, ToPort: 9256, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 8889, ToPort: 8889, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 19999, ToPort: 19999, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-${TenantId}-${Env}-backend" }
+        - { Key: Role, Value: backend }
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Attendance ${TenantId}/${Env}: db"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { Description: Solo el backend de este tenant, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref BackendSecurityGroup }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 9100, ToPort: 9100, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 9256, ToPort: 9256, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 8889, ToPort: 8889, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+        - { Description: Exporters solo desde monitoreo, IpProtocol: tcp, FromPort: 19999, ToPort: 19999, SourceSecurityGroupId: !Ref MonitoringSecurityGroupId }
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-${TenantId}-${Env}-db" }
+        - { Key: Role, Value: db }
+
+  # ---------------------------------------------------------------------- IAM
+  # Sin AmazonSSMManagedInstanceCore: incluye ssm:GetParameters sobre "*" y permitiria
+  # leer secretos de otros tenants. Solo se conceden las acciones necesarias.
+  FrontendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Action: sts:AssumeRole, Principal: { Service: ec2.amazonaws.com } }
+      Policies:
+        - !If
+          - HasBackups
+          - PolicyName: ssm-agent-and-releases
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: [ssm:UpdateInstanceInformation, ssm:ListInstanceAssociations, ssm:DescribeAssociation, ssm:UpdateInstanceAssociationStatus, ssm:GetDocument, ssm:DescribeDocument, ec2messages:AcknowledgeMessage, ec2messages:DeleteMessage, ec2messages:FailMessage, ec2messages:GetEndpoint, ec2messages:GetMessages, ec2messages:SendReply, ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel, ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel]
+                  Resource: "*"
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${BackupsBucket}/tenants/${TenantId}/${Env}/releases/*"
+                - Effect: Allow
+                  Action: s3:ListBucket
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${BackupsBucket}"
+                  Condition: { StringLike: { "s3:prefix": [!Sub "tenants/${TenantId}/${Env}/releases/*"] } }
+          - !Ref AWS::NoValue
+      Tags:
+        - { Key: Role, Value: frontend }
+
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Action: sts:AssumeRole, Principal: { Service: ec2.amazonaws.com } }
+      Policies:
+        - PolicyName: tenant-parameters
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParametersByPath, ssm:GetParameters]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tenants/${TenantId}/${Env}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tenants/${TenantId}/${Env}/*"
+        - !If
+          - HasBackups
+          - PolicyName: ssm-agent-and-releases
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - { Effect: Allow, Action: [ssm:UpdateInstanceInformation, ssm:ListInstanceAssociations, ssm:DescribeAssociation, ssm:UpdateInstanceAssociationStatus, ssm:GetDocument, ssm:DescribeDocument, ec2messages:AcknowledgeMessage, ec2messages:DeleteMessage, ec2messages:FailMessage, ec2messages:GetEndpoint, ec2messages:GetMessages, ec2messages:SendReply, ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel, ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel], Resource: "*" }
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${BackupsBucket}/tenants/${TenantId}/${Env}/releases/*"
+                - Effect: Allow
+                  Action: s3:ListBucket
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${BackupsBucket}"
+                  Condition: { StringLike: { "s3:prefix": [!Sub "tenants/${TenantId}/${Env}/releases/*"] } }
+          - !Ref AWS::NoValue
+      Tags:
+        - { Key: Role, Value: backend }
+
+  DbRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Action: sts:AssumeRole, Principal: { Service: ec2.amazonaws.com } }
+      Policies:
+        - PolicyName: tenant-parameters
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParametersByPath, ssm:GetParameters]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tenants/${TenantId}/${Env}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tenants/${TenantId}/${Env}/*"
+        # Respaldos (P3): Run Command del worker y dumps solo en SU prefijo db/.
+        - !If
+          - HasBackups
+          - PolicyName: ssm-agent-and-backups
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - { Effect: Allow, Action: [ssm:UpdateInstanceInformation, ssm:ListInstanceAssociations, ssm:DescribeAssociation, ssm:UpdateInstanceAssociationStatus, ssm:GetDocument, ssm:DescribeDocument, ec2messages:AcknowledgeMessage, ec2messages:DeleteMessage, ec2messages:FailMessage, ec2messages:GetEndpoint, ec2messages:GetMessages, ec2messages:SendReply, ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel, ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel], Resource: "*" }
+                - Effect: Allow
+                  Action: [s3:PutObject, s3:GetObject, s3:PutObjectTagging, s3:GetObjectTagging]
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${BackupsBucket}/tenants/${TenantId}/${Env}/db/*"
+                - Effect: Allow
+                  Action: s3:ListBucket
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${BackupsBucket}"
+                  Condition: { StringLike: { "s3:prefix": [!Sub "tenants/${TenantId}/${Env}/db/*"] } }
+          - !Ref AWS::NoValue
+      Tags:
+        - { Key: Role, Value: db }
+
+  FrontendProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref FrontendRole] }
+  BackendProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref BackendRole] }
+  DbProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref DbRole] }
+
+  # ------------------------------------------------------------------- Datos
+  # EBS separado del root: sobrevive a reemplazar la EC2 db. Eliminar el stack SI lo borra.
+  DbVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      Size: !Ref DbDiskGb
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-${TenantId}-${Env}-pgdata" }
+        - { Key: Role, Value: db }
+        - !If [HasBackups, { Key: BackupPolicy, Value: !Ref BackupPolicyTag }, !Ref AWS::NoValue]
+
+  # ----------------------------------------------------------------- Computo
+  # Orden: EBS -> DB -> adjuntar disco -> backend (IP privada de DB) -> frontend.
+  # El user data replica infra/cloud-init/user-data.yaml.tftpl: escribe la identidad del
+  # tenant y ejecuta attendance-boot (horneado en la AMI), que lee SSM y corre Ansible.
+  DbInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref DbAmi
+      InstanceType: !Ref DbInstanceType
+      AvailabilityZone: !Ref AvailabilityZone
+      SubnetId: !Ref PrivateSubnetId
+      SecurityGroupIds: [!Ref DbSecurityGroup]
+      IamInstanceProfile: !Ref DbProfile
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          write_files:
+            - path: /etc/attendance/tenant.json
+              owner: root:root
+              permissions: "0640"
+              content: |
+                {"vm_role":"db","db_host":"","backend_host":"","db_volume_id":"${DbVolume}",${BootIdentityJson}}
+          timezone: ${Timezone}
+          runcmd:
+            - [/usr/local/sbin/attendance-boot]
+          final_message: "attendance db (${TenantId}/${Env}): cloud-init termino en $UPTIME s"
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-${TenantId}-${Env}-db" }
+        - { Key: Role, Value: db }
+
+  DbVolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId: !Ref DbInstance
+      VolumeId: !Ref DbVolume
+
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: DbVolumeAttachment
+    Properties:
+      ImageId: !Ref BackendAmi
+      InstanceType: !Ref BackendInstanceType
+      SubnetId: !Ref PrivateSubnetId
+      SecurityGroupIds: [!Ref BackendSecurityGroup]
+      IamInstanceProfile: !Ref BackendProfile
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #cloud-config
+            write_files:
+              - path: /etc/attendance/tenant.json
+                owner: root:root
+                permissions: "0640"
+                content: |
+                  {"vm_role":"backend","db_host":"${DbHost}","backend_host":"","db_volume_id":"",${BootIdentityJson}}
+            timezone: ${Timezone}
+            runcmd:
+              - [/usr/local/sbin/attendance-boot]
+            final_message: "attendance backend (${TenantId}/${Env}): cloud-init termino en $UPTIME s"
+          - DbHost: !GetAtt DbInstance.PrivateIp
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-${TenantId}-${Env}-backend" }
+        - { Key: Role, Value: backend }
+
+  FrontendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref FrontendAmi
+      InstanceType: !Ref FrontendInstanceType
+      IamInstanceProfile: !Ref FrontendProfile
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId: !Ref PublicSubnetId
+          GroupSet: [!Ref FrontendSecurityGroup]
+          AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #cloud-config
+            write_files:
+              - path: /etc/attendance/tenant.json
+                owner: root:root
+                permissions: "0640"
+                content: |
+                  {"vm_role":"frontend","db_host":"","backend_host":"${BackendHost}","db_volume_id":"",${BootIdentityJson}}
+            timezone: ${Timezone}
+            runcmd:
+              - [/usr/local/sbin/attendance-boot]
+            final_message: "attendance frontend (${TenantId}/${Env}): cloud-init termino en $UPTIME s"
+          - BackendHost: !GetAtt BackendInstance.PrivateIp
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-${TenantId}-${Env}-frontend" }
+        - { Key: Role, Value: frontend }
+
+Outputs:
+  FrontendInstanceId: { Value: !Ref FrontendInstance }
+  BackendInstanceId: { Value: !Ref BackendInstance }
+  DbInstanceId: { Value: !Ref DbInstance }
+  FrontendPrivateIp: { Value: !GetAtt FrontendInstance.PrivateIp }
+  BackendPrivateIp: { Value: !GetAtt BackendInstance.PrivateIp }
+  DbPrivateIp: { Value: !GetAtt DbInstance.PrivateIp }
+  FrontendPublicIp:
+    Description: IP publica al crear; cambia al detener/arrancar (el adaptador la consulta otra vez).
+    Value: !GetAtt FrontendInstance.PublicIp
+  DbVolumeId: { Value: !Ref DbVolume }
+  SsmPrefix: { Value: !Sub "/tenants/${TenantId}/${Env}" }
