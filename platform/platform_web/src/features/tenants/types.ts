@@ -9,7 +9,10 @@ export interface Tenant {
   region: string;
   env: 'test' | 'prod';
   engine: 'terraform' | 'tofu' | 'pulumi' | 'cloudformation';
-  plan: 'basic' | 'standard' | 'advanced';
+  // P4: cualquier plan del catálogo (pantalla Planes), no solo los 3 de la semilla.
+  plan: string;
+  // Copia del plan con la que se creó (migración 004): versión y nombre que conserva.
+  plan_snapshot?: { code: string; name: string; version: number };
   status: string;
   created_at: string;
 }
@@ -31,6 +34,8 @@ export interface TenantDetail extends Tenant {
 export interface Plan {
   code: Tenant['plan'];
   name: string;
+  description?: string;
+  version?: number;
   sizing: { frontend: string; backend: string; db: string; db_disk_gb: number };
   limits: { max_students?: number; max_teachers?: number; max_courses?: number };
   backup: { schedule: 'weekly' | 'daily'; retention_days: number } | null;
@@ -41,11 +46,15 @@ export interface Engine {
   label: string;
   available: boolean;
 }
-export const planNames = {
+export const planNames: Record<string, string> = {
   basic: 'Básico',
   standard: 'Estándar',
   advanced: 'Avanzado',
 };
+
+/** Nombre del plan de una institución: el de su copia; si no la trae, el de la semilla o el código. */
+export const planLabel = (tenant: Pick<Tenant, 'plan' | 'plan_snapshot'>) =>
+  tenant.plan_snapshot?.name ?? planNames[tenant.plan] ?? tenant.plan;
 
 export const engineNames: Record<Tenant['engine'], string> = {
   terraform: 'Terraform',

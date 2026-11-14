@@ -169,7 +169,7 @@ export async function updatePlan(pool, user, code, input) {
     unchanged_tenants: unchanged.length,
     warning:
       changed && unchanged.length
-        ? `${unchanged.length} tenant(s) con el plan ${plan.name} siguen con la versión anterior: sus límites, tamaños y respaldo no se modificaron. Los cambios aplican a los tenants nuevos; para un tenant existente hace falta un cambio de plan (puede recrear sus servidores).`
+        ? `Plan ${plan.name} guardado (v${plan.version}). ${unchanged.length} institución(es) siguen con la versión anterior: sus límites, servidores y respaldo no se modificaron. La versión nueva aplica a las instituciones que se creen desde ahora; para una existente hace falta un cambio de plan (puede recrear sus servidores).`
         : null,
   };
 }
