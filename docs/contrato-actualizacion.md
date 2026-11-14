@@ -120,9 +120,31 @@ infra/app-update/tenant-update.sh status --tenant colegio-a --env test
 
 Opciones comunes: `--region` (por defecto `us-east-2` o `$AWS_REGION`), `--bucket` (por defecto `<project>-backups-<cuenta>`), `--project` (`attendance-platform`), `--timeout` en segundos (600).
 
+`apply` envía por Run Command (`AWS-RunShellScript`, en base64) el script `infra/app-update/remote-apply.sh`: descarga el paquete con el rol IAM de la EC2, verifica el sha256, extrae y corre `ansible/update.yml`. Tampoco está horneado en la AMI. El log completo queda en la VM en `/var/log/attendance-update.log`.
+
+`status` devuelve, en la última línea:
+
+```json
+{"tenant":"colegio-a","env":"test",
+ "vms":[{"instance_id":"i-…","role":"backend","current":"ecf3f46d0e9f","image_version":"0.2.2","last_update":{…JSON de §4…}},
+        {"instance_id":"i-…","role":"frontend","current":"2f9caca94482","image_version":"0.2.2","last_update":null}],
+ "packages":[{"key":"tenants/colegio-a/test/releases/backend-ecf3f46d0e9f.tar.gz","bytes":59594594,"last_modified":"…"}]}
+```
+
+`current` vale `horneado` en un frontend que nunca se actualizó.
+
 **Permisos de quien lo ejecuta** (worker u operador; no van en las EC2): `s3:PutObject`/`GetObject`/`ListBucket` en `tenants/*/releases/*`, `ssm:SendCommand` sobre `AWS-RunShellScript` y las instancias del proyecto, `ssm:GetCommandInvocation`, `ec2:DescribeInstances`.
 
-## 6. Cómo se prueba (para la defensa de RF-15)
+## 6. Pruebas locales (sin AWS)
+
+En `infra/ansible/tests/update/`, con Docker Desktop, desde Git Bash:
+
+| Script | Qué prueba |
+|---|---|
+| `run.sh` | Los roles con una app falsa: éxito, vuelta atrás, migración fallida, misma versión, paquete ajeno, primer cambio del frontend, limpieza de releases (10 comprobaciones) |
+| `e2e.sh` | El flujo completo `publish → apply → status` de `tenant-update.sh` con los paquetes **reales** de `build-release.sh`, PostgreSQL y migraciones reales; un backend roto vuelve atrás; la VM y los datos se conservan (14 comprobaciones). La AWS CLI se reemplaza por `fake-aws.sh` |
+
+## 7. Cómo se prueba en AWS (para la defensa de RF-15)
 
 1. Anotar el ID de la EC2 backend y crear un dato en la app (un módulo).
 2. `build-release.sh` de otro commit → `publish` → `apply`.

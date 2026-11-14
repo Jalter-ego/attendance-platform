@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Prueba de punta a punta de E2 SIN AWS: tenant-update.sh publish/apply/status con los paquetes
+# REALES de build-release.sh, contra la VM simulada (Docker) con PostgreSQL y el backend real.
+# La AWS CLI se reemplaza por fake-aws.sh (S3 = carpeta local, Run Command = docker exec).
+#
+#   bash infra/app-update/build-release.sh --component backend    # en Linux/WSL/contenedor
+#   bash infra/app-update/build-release.sh --component frontend
+#   bash infra/ansible/tests/update/e2e.sh [carpeta de paquetes, por defecto dist-releases]
+#
+# Desde Git Bash o WSL, con Docker Desktop encendido. Deja el contenedor p4-e2 vivo.
+set -uo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+REPO=$(cd "$HERE/../../../.." && pwd)
+PKGS=$(cd "${1:-$REPO/dist-releases}" && pwd)
+NAME=p4-e2 IMAGE=p4-e2-vm
+host_path() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
+export MSYS_NO_PATHCONV=1
+
+BACK=$(cd "$PKGS" && ls -t backend-*.tar.gz 2>/dev/null | head -1)
+FRONT=$(cd "$PKGS" && ls -t frontend-*.tar.gz 2>/dev/null | head -1)
+[ -n "$BACK" ] && [ -n "$FRONT" ] || { echo "ERROR: faltan paquetes en $PKGS (correr build-release.sh)"; exit 1; }
+BACK_VER=$(sed -E 's/backend-(.*)\.tar\.gz/\1/' <<<"$BACK")
+FRONT_VER=$(sed -E 's/frontend-(.*)\.tar\.gz/\1/' <<<"$FRONT")
+
+WORK=$(mktemp -d)
+export FAKE_S3="$WORK/s3" FAKE_STATE="$WORK/ssm" FAKE_VM="$NAME"
+mkdir -p "$FAKE_S3" "$WORK/bin"
+sed 's/\r$//' "$HERE/fake-aws.sh" > "$WORK/bin/aws" && chmod +x "$WORK/bin/aws"
+export PATH="$WORK/bin:$PATH"
+TU="$REPO/infra/app-update/tenant-update.sh"
+COMMON=(--tenant colegio-a --env test --bucket e2e-bucket)
+
+echo "== VM simulada $NAME (paquetes: $BACK, $FRONT)"
+docker build -q -t "$IMAGE" "$(host_path "$HERE")" >/dev/null || exit 1
+docker rm -f "$NAME" >/dev/null 2>&1
+docker run -d --name "$NAME" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -v "$(host_path "$HERE"):/test-src:ro" -v "$(host_path "$REPO/infra/ansible"):/src/ansible:ro" \
+  -v "$(host_path "$PKGS"):/pkgs:ro" -v "$(host_path "$FAKE_S3"):/fake-s3:ro" "$IMAGE" >/dev/null || exit 1
+sleep 4
+docker exec "$NAME" bash -c 'mkdir -p /test && for f in /test-src/*.sh; do sed "s/\r$//" "$f" > /test/$(basename "$f"); done; chmod +x /test/*.sh; /test/setup-vm.sh && /test/setup-real.sh' >/dev/null 2>&1 \
+  || { echo "ERROR: no se pudo preparar la VM"; exit 1; }
+VM_ID=$(docker inspect -f '{{.Id}}' "$NAME" | cut -c1-12)
+
+# Variante rota del backend real: mismo código, pero main.js termina al arrancar.
+BAD_VER=bad0bad0bad0
+docker exec "$NAME" bash -c "set -e; d=\$(mktemp -d); tar -xzf /pkgs/$BACK -C \$d
+  echo 'console.error(\"arranque roto a propósito\"); process.exit(1)' > \$d/app/dist/src/main.js
+  jq '.version=\"$BAD_VER\" | .commit=\"${BAD_VER}0000000000000000000000000000\"' \$d/manifest.json > \$d/m && mv \$d/m \$d/manifest.json
+  tar -C \$d -czf /tmp/backend-$BAD_VER.tar.gz manifest.json app ansible
+  cd /tmp && sha256sum backend-$BAD_VER.tar.gz > backend-$BAD_VER.tar.gz.sha256" || { echo "ERROR: no se pudo armar el paquete roto"; exit 1; }
+docker cp "$NAME:/tmp/backend-$BAD_VER.tar.gz" "$(host_path "$WORK")/" >/dev/null
+docker cp "$NAME:/tmp/backend-$BAD_VER.tar.gz.sha256" "$(host_path "$WORK")/" >/dev/null
+
+PASS=0 FAIL=0
+check() { if eval "$2"; then PASS=$((PASS+1)); echo "OK     $1"; else FAIL=$((FAIL+1)); echo "FALLA  $1"; fi; }
+vm() { docker exec "$NAME" bash -c "$1"; }
+last_json() { tail -n 1; }
+
+echo "== 1. publish + apply backend $BACK_VER (migraciones reales, /health con BD)"
+OUT=$(bash "$TU" publish "${COMMON[@]}" --file "$PKGS/$BACK" | last_json); echo "   $OUT"
+check "publish backend sube paquete y sha256" "[ -f '$FAKE_S3/e2e-bucket/tenants/colegio-a/test/releases/$BACK.sha256' ]"
+OUT=$(bash "$TU" apply "${COMMON[@]}" --component backend --version "$BACK_VER" | last_json); RC=$?; echo "   $OUT"
+check "apply backend → succeeded" "[[ '$OUT' == *'\"status\":\"succeeded\"'* ]]"
+check "backend-current = $BACK_VER" "[ \"\$(vm 'basename \$(readlink /opt/attendance/backend-current)')\" = backend-$BACK_VER ]"
+check "/core/api/v1/health = 200 (app real)" "[ \"\$(vm 'curl -s -o /dev/null -w %{http_code} localhost:5000/core/api/v1/health')\" = 200 ]"
+check "migraciones aplicadas (SequelizeMeta)" "[ \"\$(vm \"PGPASSWORD=e2e-password-0123456789 psql -tA -h 127.0.0.1 -U attendance attendance -c 'select count(*)>0 from \\\"SequelizeMeta\\\"'\")\" = t ]"
+
+echo "== 2. publish + apply frontend $FRONT_VER"
+bash "$TU" publish "${COMMON[@]}" --file "$PKGS/$FRONT" >/dev/null
+OUT=$(bash "$TU" apply "${COMMON[@]}" --component frontend --version "$FRONT_VER" | last_json); echo "   $OUT"
+check "apply frontend → succeeded" "[[ '$OUT' == *'\"status\":\"succeeded\"'* ]]"
+check "nginx sirve el build nuevo" "vm 'diff -q <(curl -s localhost/) /opt/attendance/releases/frontend-$FRONT_VER/index.html' >/dev/null"
+
+echo "== 3. backend roto → vuelta atrás"
+bash "$TU" publish "${COMMON[@]}" --file "$WORK/backend-$BAD_VER.tar.gz" >/dev/null
+OUT=$(bash "$TU" apply "${COMMON[@]}" --component backend --version "$BAD_VER" | last_json); RC=$?; echo "   ${OUT:0:220}…"
+check "apply roto → rolled_back y código de salida ≠ 0" "[[ '$OUT' == *'\"status\":\"rolled_back\"'* ]] && [ $RC -ne 0 ]"
+check "sigue en $BACK_VER con health 200" "[ \"\$(vm 'basename \$(readlink /opt/attendance/backend-current)')\" = backend-$BACK_VER ] && [ \"\$(vm 'curl -s -o /dev/null -w %{http_code} localhost:5000/core/api/v1/health')\" = 200 ]"
+
+echo "== 4. errores de uso"
+bash "$TU" apply "${COMMON[@]}" --component backend --version 0123456789ab >/dev/null 2>&1; RC=$?
+check "apply de versión no publicada → error" "[ $RC -ne 0 ]"
+bash "$TU" publish "${COMMON[@]}" --file "$PKGS/$BACK.sha256" >/dev/null 2>&1; RC=$?
+check "publish de un archivo con nombre inválido → error" "[ $RC -ne 0 ]"
+
+echo "== 5. status"
+OUT=$(bash "$TU" status "${COMMON[@]}" | last_json); echo "   ${OUT:0:300}…"
+check "status: backend $BACK_VER y frontend $FRONT_VER" "[[ '$OUT' == *'\"role\":\"backend\",\"current\":\"$BACK_VER\"'* && '$OUT' == *'\"role\":\"frontend\",\"current\":\"$FRONT_VER\"'* ]]"
+
+echo "== 6. sin recrear infraestructura"
+check "misma VM (contenedor $VM_ID)" "[ \"\$(docker inspect -f '{{.Id}}' $NAME | cut -c1-12)\" = $VM_ID ]"
+check "el dato previo sigue en la BD" "[ \"\$(vm \"PGPASSWORD=e2e-password-0123456789 psql -tA -h 127.0.0.1 -U attendance attendance -c 'select nota from e2e_marcador'\")\" = 'dato creado antes de actualizar' ]"
+
+echo "== $PASS correctos, $FAIL fallidos   (log de Ansible: docker exec $NAME cat /var/log/attendance-update.log)"
+[ "$FAIL" -eq 0 ]
