@@ -142,7 +142,7 @@ En `infra/ansible/tests/update/`, con Docker Desktop, desde Git Bash:
 | Script | Qué prueba |
 |---|---|
 | `run.sh` | Los roles con una app falsa: éxito, vuelta atrás, migración fallida, misma versión, paquete ajeno, primer cambio del frontend, limpieza de releases (10 comprobaciones) |
-| `e2e.sh` | El flujo completo `publish → apply → status` de `tenant-update.sh` con los paquetes **reales** de `build-release.sh`, PostgreSQL y migraciones reales; un backend roto vuelve atrás; la VM y los datos se conservan (14 comprobaciones). La AWS CLI se reemplaza por `fake-aws.sh` |
+| `e2e.sh` | El flujo completo `publish → apply → status` de `tenant-update.sh` con los paquetes **reales** de `build-release.sh`, PostgreSQL y migraciones reales; un backend roto vuelve atrás; la VM y los datos se conservan; `tenant-health.sh` sano, API caída (502), BD caída (503), recuperación y frontend sin respuesta (20 comprobaciones). La AWS CLI se reemplaza por `fake-aws.sh`, que por defecto responde con `\r\n` como la de Windows del worker (`FAKE_CRLF=0` para desactivarlo) |
 
 ## 7. Cómo se prueba en AWS (para la defensa de RF-15)
 
@@ -150,3 +150,31 @@ En `infra/ansible/tests/update/`, con Docker Desktop, desde Git Bash:
 2. `build-release.sh` de otro commit → `publish` → `apply`.
 3. Comprobar: mismo ID de EC2, el dato sigue, `status` muestra la versión nueva, `/health` 200.
 4. Forzar un fallo (paquete con `dist/src/main.js` roto) → `apply` devuelve `rolled_back` y la app sigue en la versión anterior.
+
+## 8. Health check del tenant (E6) — `infra/health/tenant-health.sh`
+
+Un tenant no está listo hasta pasar este chequeo (`docs/contratos-integracion.md`). El worker lo corre después de crear, reanudar o actualizar un tenant, igual que `tenant-backup.sh`: Git Bash + AWS CLI, JSON en la última línea, código 0 solo si está sano.
+
+```bash
+infra/health/tenant-health.sh --tenant colegio-a --env test --url "<outputs.urls.frontend>" [--boot] [--timeout 300]
+```
+
+- Sin `--url` busca la IP pública de la EC2 frontend en ejecución por etiquetas (`Project/Tenant/Env/Role`).
+- Comprueba por el nginx público `GET /healthz` (frontend) y `GET /core/api/v1/health` (nginx → API → PostgreSQL). Reintenta cada `--interval` (5 s) hasta `--timeout` (300 s): un tenant recién creado tarda ~90 s.
+- `--boot` lee además `/var/lib/attendance/boot.json` de las 3 VMs por Run Command (`booting | ready | failed` + mensaje): explica por qué no está sano.
+
+```json
+{"tenant":"colegio-a","env":"test","status":"unhealthy",
+ "reason":"la API responde pero no llega a su base de datos",
+ "url":"http://3.14.15.92/",
+ "checks":{"frontend":{"url":"http://3.14.15.92/healthz","status":200,"ms":41},
+           "backend":{"url":"http://3.14.15.92/core/api/v1/health","status":503,"ms":57,"body":"{status:error}"}},
+ "attempts":60,"elapsed_s":301,"boot":null,"checked_at":"2026-11-14T19:54:33Z"}
+```
+
+| `checks` | `reason` |
+|---|---|
+| frontend `0` | el frontend no responde (VM apagada, arrancando o sin IP pública) |
+| backend `502`/`504` | nginx no llega al backend (API caída o arrancando) |
+| backend `503` | la API responde pero no llega a su base de datos |
+| ambos `200` | `null` → `status: healthy` |

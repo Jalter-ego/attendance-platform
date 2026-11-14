@@ -43,6 +43,10 @@ chmod 0640 /etc/attendance/tenant.json
 
 sed 's/\r$//' /test-src/fake-aws.sh > /usr/local/bin/aws && chmod +x /usr/local/bin/aws
 
+# Señal de arranque que deja attendance-boot (la lee tenant-health.sh --boot).
+echo '{"status":"ready","message":"","role":"backend","tenant_id":"colegio-a","env":"test","image_version":"0.2.2","finished_at":"2026-11-14T12:00:00Z"}' \
+  > /var/lib/attendance/boot.json
+
 PGPASSWORD=e2e-password-0123456789 psql -q -h 127.0.0.1 -U attendance attendance \
   -c "CREATE TABLE IF NOT EXISTS e2e_marcador(nota text); INSERT INTO e2e_marcador VALUES ('dato creado antes de actualizar');"
 echo "BD y backend.env listos"

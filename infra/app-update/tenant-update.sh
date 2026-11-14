@@ -43,18 +43,20 @@ export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 # Git Bash en Windows convierte "/opt/..." en rutas de Windows; aquí no queremos eso.
 export MSYS_NO_PATHCONV=1
 HERE=$(cd "$(dirname "$0")" && pwd)
+# AWS CLI en Windows (worker con Git Bash) devuelve \r\n: se limpia todo lo que se lee de ella.
+aws_text() { aws "$@" --output text | tr -d '\r'; }
 
 if [ -z "$BUCKET" ]; then
-  ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+  ACCOUNT=$(aws_text sts get-caller-identity --query Account)
   BUCKET="$PROJECT-backups-$ACCOUNT"
 fi
 PREFIX="tenants/$TENANT/$ENV_NAME/releases"   # = outputs.releases.prefix del módulo de tenant
 
 instance_of() {
   local id
-  id=$(aws ec2 describe-instances --filters Name=tag:Project,Values="$PROJECT" Name=tag:Tenant,Values="$TENANT" \
+  id=$(aws_text ec2 describe-instances --filters Name=tag:Project,Values="$PROJECT" Name=tag:Tenant,Values="$TENANT" \
     Name=tag:Env,Values="$ENV_NAME" Name=tag:Role,Values="$1" Name=instance-state-name,Values=running \
-    --query 'Reservations[].Instances[].InstanceId | [0]' --output text)
+    --query 'Reservations[].Instances[].InstanceId | [0]')
   [ -n "$id" ] && [ "$id" != None ] || die "no hay una VM $1 en ejecución para $TENANT/$ENV_NAME (¿suspendido?)"
   echo "$id"
 }
@@ -65,26 +67,26 @@ run_script() {
   local instance="$1" script="$2" comment="$3" cmd_id waited=0 b64 args="${*:4}"
   b64=$(base64 < "$script" | tr -d '\n')
   local command="echo $b64 | base64 -d > /run/attendance-ssm.sh && bash /run/attendance-ssm.sh $args; rc=\$?; rm -f /run/attendance-ssm.sh; exit \$rc"
-  cmd_id=$(aws ssm send-command --instance-ids "$instance" --document-name AWS-RunShellScript \
+  cmd_id=$(aws_text ssm send-command --instance-ids "$instance" --document-name AWS-RunShellScript \
     --comment "$comment" --timeout-seconds 60 \
     --parameters "{\"commands\":[\"$command\"],\"executionTimeout\":[\"$TIMEOUT\"]}" \
-    --query Command.CommandId --output text) || die "SSM no aceptó el comando (¿agente registrado? ¿permisos de P1 aplicados?)"
+    --query Command.CommandId) || die "SSM no aceptó el comando (¿agente registrado? ¿permisos de P1 aplicados?)"
   RUN_CMD_ID="$cmd_id"
   echo "== SSM $cmd_id en $instance: $comment"
   while :; do
-    RUN_STATUS=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance" \
-      --query Status --output text 2>/dev/null || echo Pending)
+    RUN_STATUS=$(aws_text ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance" \
+      --query Status 2>/dev/null || echo Pending)
     case "$RUN_STATUS" in
       Success | Failed | Cancelled | TimedOut | Cancelling) break ;;
     esac
     [ "$waited" -ge "$TIMEOUT" ] && { RUN_STATUS=TimedOut; break; }
     sleep 5; waited=$((waited + 5))
   done
-  RUN_OUT=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance" \
-    --query StandardOutputContent --output text 2>/dev/null || true)
+  RUN_OUT=$(aws_text ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance" \
+    --query StandardOutputContent 2>/dev/null || true)
   local err
-  err=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance" \
-    --query StandardErrorContent --output text 2>/dev/null || true)
+  err=$(aws_text ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance" \
+    --query StandardErrorContent 2>/dev/null || true)
   [ -n "$RUN_OUT" ] && printf '%s\n' "$RUN_OUT" | grep -vE '^\{' || true
   [ -n "$err" ] && [ "$err" != None ] && printf '%s\n' "$err" >&2
   RUN_RESULT=$(printf '%s\n' "$RUN_OUT" | grep -E '^\{' | tail -n 1 || true)
@@ -148,6 +150,6 @@ SH
       --query "Contents[?ends_with(Key, '.tar.gz')].{key: Key, bytes: Size, last_modified: LastModified}" --output json)
     [ "$PKGS" = null ] && PKGS="[]"
     printf '{"tenant":"%s","env":"%s","vms":[%s],"packages":%s}\n' \
-      "$TENANT" "$ENV_NAME" "$(IFS=,; echo "${VMS[*]}")" "$(tr -d '\n' <<<"$PKGS")"
+      "$TENANT" "$ENV_NAME" "$(IFS=,; echo "${VMS[*]}")" "$(tr -d '\r\n' <<<"$PKGS")"
     ;;
 esac

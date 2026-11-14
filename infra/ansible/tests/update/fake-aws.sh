@@ -4,6 +4,12 @@
 # simulada ($FAKE_VM), que hace de backend o de frontend según la instancia (i-fake-<rol>).
 set -uo pipefail
 S3=${FAKE_S3:-/fake-s3} ST=${FAKE_STATE:-/tmp/fake-ssm} VM=${FAKE_VM:-p4-e2}
+
+# FAKE_CRLF=1 imita la AWS CLI de Windows (la que usa el worker con Git Bash): \r\n al final.
+if [ "${FAKE_CRLF:-0}" = 1 ] && [ -z "${FAKE_CRLF_INNER:-}" ]; then
+  FAKE_CRLF_INNER=1 "$0" "$@" | sed 's/$/\r/'
+  exit "${PIPESTATUS[0]}"
+fi
 svc=${1:-} op=${2:-}; shift 2 || true
 
 arg() { local k=$1; shift; while [ $# -gt 0 ]; do [ "$1" = "$k" ] && { echo "${2:-}"; return; }; shift; done; }
@@ -13,6 +19,8 @@ case "$svc $op" in
   "sts get-caller-identity") echo 123456789012 ;;
 
   "ec2 describe-instances")
+    # Con FAKE_PUBLIC_IP=127.0.0.1:18080 la "IP pública" del frontend es el puerto publicado.
+    if [[ "$(arg --query "$@")" == *PublicIpAddress* ]]; then echo "${FAKE_PUBLIC_IP:-None}"; exit 0; fi
     for a in "$@"; do [[ $a == Name=tag:Role,Values=* ]] && echo "i-fake-${a##*=}"; done ;;
 
   "s3 cp")

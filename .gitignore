@@ -30,6 +30,7 @@ crash.*.log
 # Dependencias, compilación y resultados locales
 node_modules/
 dist/
+dist-releases/
 build/
 coverage/
 __pycache__/

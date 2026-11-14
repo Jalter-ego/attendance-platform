@@ -25,6 +25,8 @@ FRONT_VER=$(sed -E 's/frontend-(.*)\.tar\.gz/\1/' <<<"$FRONT")
 
 WORK=$(mktemp -d)
 export FAKE_S3="$WORK/s3" FAKE_STATE="$WORK/ssm" FAKE_VM="$NAME"
+# Por defecto la CLI falsa responde como la de Windows (\r\n), igual que en el worker de P6.
+export FAKE_CRLF=${FAKE_CRLF:-1} FAKE_PUBLIC_IP=127.0.0.1:18080
 mkdir -p "$FAKE_S3" "$WORK/bin"
 sed 's/\r$//' "$HERE/fake-aws.sh" > "$WORK/bin/aws" && chmod +x "$WORK/bin/aws"
 export PATH="$WORK/bin:$PATH"
@@ -34,7 +36,7 @@ COMMON=(--tenant colegio-a --env test --bucket e2e-bucket)
 echo "== VM simulada $NAME (paquetes: $BACK, $FRONT)"
 docker build -q -t "$IMAGE" "$(host_path "$HERE")" >/dev/null || exit 1
 docker rm -f "$NAME" >/dev/null 2>&1
-docker run -d --name "$NAME" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+docker run -d --name "$NAME" -p 18080:80 --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -v "$(host_path "$HERE"):/test-src:ro" -v "$(host_path "$REPO/infra/ansible"):/src/ansible:ro" \
   -v "$(host_path "$PKGS"):/pkgs:ro" -v "$(host_path "$FAKE_S3"):/fake-s3:ro" "$IMAGE" >/dev/null || exit 1
 sleep 4
@@ -91,6 +93,27 @@ check "status: backend $BACK_VER y frontend $FRONT_VER" "[[ '$OUT' == *'\"role\"
 echo "== 6. sin recrear infraestructura"
 check "misma VM (contenedor $VM_ID)" "[ \"\$(docker inspect -f '{{.Id}}' $NAME | cut -c1-12)\" = $VM_ID ]"
 check "el dato previo sigue en la BD" "[ \"\$(vm \"PGPASSWORD=e2e-password-0123456789 psql -tA -h 127.0.0.1 -U attendance attendance -c 'select nota from e2e_marcador'\")\" = 'dato creado antes de actualizar' ]"
+
+echo "== 7. tenant-health.sh (E6)"
+TH="$REPO/infra/health/tenant-health.sh"
+HC=(--tenant colegio-a --env test --timeout 6 --interval 2)
+OUT=$(bash "$TH" "${HC[@]}" --boot | tail -n 1); RC=$?; echo "   ${OUT:0:260}…"
+check "sano: IP pública por etiquetas, frontend y backend 200, código 0" "[[ '$OUT' == *'\"status\":\"healthy\"'* ]] && [ $RC -eq 0 ]"
+check "--boot: boot.json de las 3 VMs" "[ \$(grep -o '\"status\":\"ready\"' <<<'$OUT' | wc -l) -eq 3 ]"
+vm 'systemctl stop attendance-backend'
+OUT=$(bash "$TH" "${HC[@]}" --url http://127.0.0.1:18080/ | tail -n 1); RC=$?
+check "API caída → unhealthy, backend 502, código ≠ 0" "[[ '$OUT' == *'\"status\":\"unhealthy\"'* && '$OUT' == *'nginx no llega al backend'* ]] && [ $RC -ne 0 ]"
+# La API tiene que estar arriba antes de cortar la BD: sin BD, NestJS ni siquiera arranca (502).
+vm 'systemctl start attendance-backend'
+bash "$TH" "${HC[@]}" --url http://127.0.0.1:18080/ --timeout 60 >/dev/null
+vm 'systemctl stop postgresql'
+OUT=$(bash "$TH" "${HC[@]}" --url http://127.0.0.1:18080/ --timeout 30 | tail -n 1)
+check "BD caída → unhealthy, backend 503" "[[ '$OUT' == *'\"status\":503'* && '$OUT' == *'no llega a su base de datos'* ]]"
+vm 'systemctl start postgresql'
+OUT=$(bash "$TH" "${HC[@]}" --url http://127.0.0.1:18080/ --timeout 60 | tail -n 1); RC=$?
+check "se recupera → healthy con reintentos" "[[ '$OUT' == *'\"status\":\"healthy\"'* ]] && [ $RC -eq 0 ]"
+OUT=$(bash "$TH" "${HC[@]}" --url http://127.0.0.1:1/ --timeout 2 | tail -n 1)
+check "sin respuesta del frontend → status 0 y JSON válido" "node -e 'const j=JSON.parse(process.argv[1]); process.exit(j.checks.frontend.status===0?0:1)' '$OUT'"
 
 echo "== $PASS correctos, $FAIL fallidos   (log de Ansible: docker exec $NAME cat /var/log/attendance-update.log)"
 [ "$FAIL" -eq 0 ]
