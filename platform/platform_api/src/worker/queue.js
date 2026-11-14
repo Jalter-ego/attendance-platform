@@ -2,6 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { transaction } from '../db/pool.js';
 import { appendEvent } from '../modules/operations/operations.service.js';
+import {
+  runBackupOperation,
+  ScriptError,
+} from '../modules/backups/backups.service.js';
+
+// Handlers por tipo de operación: reciben { pool, config, operation, report, signal } y
+// devuelven el resultado JSON que se guarda en operations.result.
+const handlers = { backup: runBackupOperation, restore: runBackupOperation };
 
 class Cancelled extends Error {}
 class LeaseLost extends Error {}
@@ -65,7 +73,7 @@ const steps = [
 // P2 integrará aquí los handlers de los motores. El diagnóstico nunca llama a AWS.
 export async function runOnce(
   pool,
-  { workerId = randomUUID(), signal, stepDelayMs = 350 } = {},
+  { workerId = randomUUID(), signal, stepDelayMs = 350, config } = {},
 ) {
   const operation = await claimOperation(pool, workerId);
   if (!operation) return false;
@@ -88,36 +96,58 @@ export async function runOnce(
   timer.unref();
   let status = 'succeeded';
   let errorMessage = null;
+  let output = null;
+  // Registra un evento y, si se indica, la etapa/progreso. Corta si se pidió cancelar o si
+  // este worker perdió la operación.
+  const report = (message, { stage = null, progress = null, level = 'info' } = {}) =>
+    transaction(pool, async (client) => {
+      const result = await client.query(
+        "UPDATE operations SET stage = COALESCE($3, stage), progress = COALESCE($4, progress), heartbeat_at = now() WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING cancel_requested",
+        [operation.id, workerId, stage, progress],
+      );
+      if (!result.rowCount) throw new LeaseLost();
+      if (result.rows[0].cancel_requested) throw new Cancelled();
+      await appendEvent(client, operation.id, level, message);
+    });
   try {
-    if (operation.type !== 'diagnostic') throw new Error('Unsupported handler');
-    for (const [progress, stage, message] of steps) {
-      jobSignal.throwIfAborted();
-      await sleep(stepDelayMs, undefined, { signal: jobSignal });
-      await transaction(pool, async (client) => {
-        const result = await client.query(
-          "UPDATE operations SET stage = $3, progress = $4, heartbeat_at = now() WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING cancel_requested",
-          [operation.id, workerId, stage, progress],
-        );
-        if (!result.rowCount) throw new LeaseLost();
-        if (result.rows[0].cancel_requested) throw new Cancelled();
-        await appendEvent(client, operation.id, 'info', message);
+    if (operation.type === 'diagnostic') {
+      for (const [progress, stage, message] of steps) {
+        jobSignal.throwIfAborted();
+        await sleep(stepDelayMs, undefined, { signal: jobSignal });
+        await report(message, { stage, progress });
+      }
+    } else if (handlers[operation.type]) {
+      output = await handlers[operation.type]({
+        pool,
+        config,
+        operation,
+        report,
+        signal: jobSignal,
       });
-    }
+    } else throw new Error('Unsupported handler');
   } catch (error) {
     if (error instanceof LeaseLost || lease.signal.aborted) return true;
     status = error instanceof Cancelled ? 'cancelled' : 'failed';
     errorMessage =
-      status === 'failed'
-        ? 'El worker se interrumpió. Revisa y reintenta la operación.'
-        : null;
+      status !== 'failed'
+        ? null
+        : error instanceof ScriptError
+          ? error.message.slice(0, 500)
+          : 'El worker se interrumpió. Revisa y reintenta la operación.';
   } finally {
     clearInterval(timer);
     await heartbeat;
   }
   await transaction(pool, async (client) => {
     const result = await client.query(
-      "UPDATE operations SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE $3 END, stage = CASE WHEN cancel_requested OR $3 = 'cancelled' THEN 'Cancelada' WHEN $3 = 'succeeded' THEN 'Completada' ELSE 'Fallida' END, error_message = CASE WHEN cancel_requested THEN NULL ELSE $4 END, finished_at = now(), worker_id = NULL WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING status",
-      [operation.id, workerId, status, errorMessage],
+      "UPDATE operations SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE $3 END, stage = CASE WHEN cancel_requested OR $3 = 'cancelled' THEN 'Cancelada' WHEN $3 = 'succeeded' THEN 'Completada' ELSE 'Fallida' END, error_message = CASE WHEN cancel_requested THEN NULL ELSE $4 END, result = $5::jsonb, finished_at = now(), worker_id = NULL WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING status",
+      [
+        operation.id,
+        workerId,
+        status,
+        errorMessage,
+        output === null ? null : JSON.stringify(output),
+      ],
     );
     if (result.rowCount)
       await appendEvent(

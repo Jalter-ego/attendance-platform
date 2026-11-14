@@ -123,6 +123,9 @@ export function TenantDetailPage() {
                 Los accesos aparecerán después del despliegue.
               </p>
             )}
+            <Link className="text-link" to={`/backups?tenant=${id}`}>
+              Respaldos <Icon name="arrow" size={16} />
+            </Link>
           </div>
         </section>
         <section className="panel integration-card">

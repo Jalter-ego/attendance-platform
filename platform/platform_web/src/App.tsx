@@ -12,6 +12,7 @@ import { PlatformLayout } from './components/PlatformLayout';
 import { TenantsPage } from './features/tenants/pages/TenantsPage';
 import { RegisterTenantPage } from './features/tenants/pages/RegisterTenantPage';
 import { TenantDetailPage } from './features/tenants/pages/TenantDetailPage';
+import { BackupsPage } from './features/backups/pages/BackupsPage';
 import './App.css';
 
 function RequireAuth() {
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/tenants" element={<TenantsPage />} />
               <Route path="/tenants/new" element={<RegisterTenantPage />} />
               <Route path="/tenants/:id" element={<TenantDetailPage />} />
+              <Route path="/backups" element={<BackupsPage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/tenants" replace />} />

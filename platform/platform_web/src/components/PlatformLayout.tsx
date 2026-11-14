@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../features/auth/hooks/useAuth';
 import { Icon } from './Icon';
 
 export function PlatformLayout() {
   const { user, logout } = useAuth();
+  const { pathname } = useLocation();
   const [error, setError] = useState('');
   return (
     <div className="platform-layout">
@@ -24,6 +25,11 @@ export function PlatformLayout() {
             Instituciones
             <Icon name="arrow" size={16} />
           </NavLink>
+          <NavLink to="/backups">
+            <Icon name="archive" />
+            Respaldos
+            <Icon name="arrow" size={16} />
+          </NavLink>
         </nav>
         <div className="sidebar-bottom">
           <div className="environment-dot" />
@@ -35,7 +41,7 @@ export function PlatformLayout() {
         <header className="topbar">
           <span>
             Plataforma <span className="breadcrumb-divider">/</span>{' '}
-            Instituciones
+            {pathname.startsWith('/backups') ? 'Respaldos' : 'Instituciones'}
           </span>
           <div className="profile">
             <span className="avatar">

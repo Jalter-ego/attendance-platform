@@ -1,0 +1,84 @@
+.backup-tenant-select {
+  min-width: 260px;
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  font: inherit;
+}
+.backup-mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+}
+.backup-id {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.72rem;
+}
+.section-heading .icon-button {
+  margin-left: auto;
+}
+.backup-warning {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #f3d27a;
+  border-radius: 8px;
+  background: #fff8e6;
+  color: #7a5200;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.button.danger {
+  background: #b42318;
+  border-color: #b42318;
+  color: white;
+}
+.button.danger:hover:not(:disabled) {
+  background: #912018;
+}
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.backup-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(15 23 20 / 45%);
+}
+.backup-dialog {
+  width: min(460px, 100%);
+  padding: 24px;
+  overflow: visible;
+}
+.backup-dialog h2 {
+  margin: 0 0 8px;
+}
+.backup-dialog p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.backup-dialog label {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  font-size: 0.85rem;
+}
+.backup-dialog input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+@media (max-width: 640px) {
+  .backup-tenant-select {
+    min-width: 0;
+    width: 100%;
+  }
+}

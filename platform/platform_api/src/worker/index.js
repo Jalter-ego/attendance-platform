@@ -19,6 +19,7 @@ try {
       const processed = await runOnce(pool, {
         workerId,
         signal: controller.signal,
+        config,
       });
       if (processed) continue;
     } catch (error) {

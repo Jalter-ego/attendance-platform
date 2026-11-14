@@ -130,7 +130,8 @@ Prefijo: `/api/v1`. Los cuerpos son JSON y la autenticación usa la cookie HttpO
 | `GET /tenants` | `q`, `status`, `env`, `plan`, `limit`, `offset` | Sesión, filtrado por permisos |
 | `POST /tenants` | Registrar institución, sin desplegar | Administrador de plataforma |
 | `GET /tenants/:id` | Datos, últimas 20 operaciones y 10 despliegues | Sesión, filtrado por permisos |
-| `POST /tenants/:id/operations` | `{type:"diagnostic"}`; devuelve `202` | Administrador de plataforma |
+| `GET /tenants/:id/backups` | Respaldos del tenant (dumps S3 + snapshots EBS), consultados en AWS al momento | Sesión, filtrado por permisos |
+| `POST /tenants/:id/operations` | `{type:"diagnostic"}`, `{type:"backup"}` o `{type:"restore",backup_id:"<id>|latest"}`; devuelve `202` | Administrador de plataforma |
 | `GET /operations/:id` | Estado, etapa y porcentaje | Sesión, filtrado por permisos |
 | `GET /operations/:id/logs?after=0` | Eventos por cursor | Sesión, filtrado por permisos |
 | `POST /operations/:id/cancel` | Cancelar trabajo en cola/en curso | Administrador de plataforma |
@@ -152,9 +153,21 @@ Entrada de registro:
 }
 ```
 
-Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Todavía no se implementaron las rutas reales de crear infraestructura, suspender, reanudar, eliminar o respaldar.
+Los errores tienen `{ "error": { "code": "...", "message": "..." } }`; la validación puede añadir `fields`. Una segunda operación activa devuelve `409 TENANT_BUSY`. Los logs devuelven `{items,next_cursor,has_more}`; usar el cursor siguiente para evitar duplicados. El frontend consulta el progreso mediante polling. Todavía no se implementaron las rutas reales de crear infraestructura, suspender, reanudar o eliminar. Respaldar y restaurar ya funcionan: ver [Respaldos](#respaldos-p3).
 
 La cola reclama trabajos con transacciones y `FOR UPDATE SKIP LOCKED`. Un índice único impide más de un trabajo activo por tenant, incluso entre procesos. El heartbeat identifica al worker dueño de cada trabajo. Se admite cancelar y reintentar el diagnóstico; el reintento de IaC deberá reconciliar el estado existente antes de ejecutar de nuevo.
+
+## Respaldos (P3)
+
+Pantalla **Respaldos** del menú lateral (`/backups?tenant=<id>`): lista los respaldos del tenant, «Respaldar ahora» y «Restaurar» (confirma escribiendo el `tenant_id`). Respaldar y restaurar son operaciones de la cola (`backup`/`restore`, migración `002_backups.sql`): heredan el bloqueo por tenant, los eventos, la cancelación y el reintento. El worker ejecuta `infra/backups/tenant-backup.sh`, que usa AWS CLI con las credenciales del proceso del worker (perfil `default` o variables `AWS_*`), y guarda su JSON final en `operations.result`. El listado (`GET /tenants/:id/backups`) llama al mismo script con `list`.
+
+| Variable | Por defecto | Uso |
+| --- | --- | --- |
+| `BACKUP_BASH` | `bash`; en Windows `C:\Program Files\Git\bin\bash.exe` | Bash que ejecuta el script. En Windows usar Git Bash, no el de WSL (no ve las credenciales de AWS de Windows) |
+| `BACKUP_SCRIPT` | `infra/backups/tenant-backup.sh` del repositorio | Ruta del script |
+| `BACKUP_TIMEOUT_S` | `900` | Tiempo máximo del comando en la VM db |
+
+Requiere AWS CLI v2, la VM db del tenant encendida y AMIs ≥ 0.2.1. El proceso hijo no recibe `DATABASE_URL` ni los secretos de la plataforma. Cancelar corta el script local; un comando que ya llegó a la VM db termina allí. Pruebas sin AWS: `pnpm test:backups`.
 
 ## Verificación
 

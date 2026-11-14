@@ -124,8 +124,9 @@ case "$CMD" in
       --filters Name=tag:Project,Values="$PROJECT" Name=tag:Tenant,Values="$TENANT" Name=tag:Env,Values="$ENV_NAME" \
       --query "Snapshots[].{snapshot_id: SnapshotId, state: State, started: StartTime, gib: VolumeSize, backup_id: Tags[?Key=='BackupId']|[0].Value, type: Tags[?Key=='BackupType']|[0].Value}" \
       --output json)
+    # Una sola línea: AWS CLI en Windows devuelve el JSON con \r\n.
     printf '{"tenant":"%s","env":"%s","bucket":"%s","dumps":%s,"snapshots":%s}\n' \
-      "$TENANT" "$ENV_NAME" "$BUCKET" "$(tr -d '\n' <<<"$DUMPS")" "$(tr -d '\n' <<<"$SNAPS")"
+      "$TENANT" "$ENV_NAME" "$BUCKET" "$(tr -d '\r\n' <<<"$DUMPS")" "$(tr -d '\r\n' <<<"$SNAPS")"
     ;;
 
   prune)
