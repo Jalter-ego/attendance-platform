@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { transaction } from '../db/pool.js';
 import { appendEvent } from '../modules/operations/operations.service.js';
+import { redact } from '../lib/redact.js';
+import { CommandError } from './services/command-runner.js';
+import { OperationCancelled, OperationError, LeaseLost } from './errors.js';
 import {
   runBackupOperation,
   ScriptError,
@@ -10,9 +13,6 @@ import {
 // Handlers por tipo de operación: reciben { pool, config, operation, report, signal } y
 // devuelven el resultado JSON que se guarda en operations.result.
 const handlers = { backup: runBackupOperation, restore: runBackupOperation };
-
-class Cancelled extends Error {}
-class LeaseLost extends Error {}
 
 export async function recoverStale(pool, staleMs) {
   return transaction(pool, async (client) => {
@@ -73,7 +73,7 @@ const steps = [
 // P2 integrará aquí los handlers de los motores. El diagnóstico nunca llama a AWS.
 export async function runOnce(
   pool,
-  { workerId = randomUUID(), signal, stepDelayMs = 350, config } = {},
+  { workerId = randomUUID(), signal, stepDelayMs = 350, heartbeatMs = 5000, config } = {},
 ) {
   const operation = await claimOperation(pool, workerId);
   if (!operation) return false;
@@ -85,14 +85,15 @@ export async function runOnce(
   const timer = setInterval(() => {
     heartbeat = pool
       .query(
-        "UPDATE operations SET heartbeat_at = now() WHERE id = $1 AND worker_id = $2 AND status = 'running'",
+        "UPDATE operations SET heartbeat_at = now() WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING cancel_requested",
         [operation.id, workerId],
       )
       .then((result) => {
-        if (!result.rowCount) lease.abort();
+        if (!result.rowCount) lease.abort(new LeaseLost());
+        else if (result.rows[0].cancel_requested) lease.abort(new OperationCancelled());
       })
-      .catch(() => lease.abort());
-  }, 5000);
+      .catch(() => lease.abort(new LeaseLost()));
+  }, heartbeatMs);
   timer.unref();
   let status = 'succeeded';
   let errorMessage = null;
@@ -103,10 +104,10 @@ export async function runOnce(
     transaction(pool, async (client) => {
       const result = await client.query(
         "UPDATE operations SET stage = COALESCE($3, stage), progress = COALESCE($4, progress), heartbeat_at = now() WHERE id = $1 AND worker_id = $2 AND status = 'running' RETURNING cancel_requested",
-        [operation.id, workerId, stage, progress],
+        [operation.id, workerId, stage === null ? null : redact(stage).slice(0, 120), progress],
       );
       if (!result.rowCount) throw new LeaseLost();
-      if (result.rows[0].cancel_requested) throw new Cancelled();
+      if (result.rows[0].cancel_requested) throw new OperationCancelled();
       await appendEvent(client, operation.id, level, message);
     });
   try {
@@ -126,13 +127,16 @@ export async function runOnce(
       });
     } else throw new Error('Unsupported handler');
   } catch (error) {
-    if (error instanceof LeaseLost || lease.signal.aborted) return true;
-    status = error instanceof Cancelled ? 'cancelled' : 'failed';
+    if (error instanceof LeaseLost || lease.signal.reason instanceof LeaseLost) return true;
+    status = error instanceof OperationCancelled ||
+      lease.signal.reason instanceof OperationCancelled ||
+      (error instanceof CommandError && error.code === 'COMMAND_CANCELLED')
+      ? 'cancelled' : 'failed';
     errorMessage =
       status !== 'failed'
         ? null
-        : error instanceof ScriptError
-          ? error.message.slice(0, 500)
+        : error instanceof ScriptError || error instanceof OperationError
+          ? redact(error.message).slice(0, 500)
           : 'El worker se interrumpió. Revisa y reintenta la operación.';
   } finally {
     clearInterval(timer);
