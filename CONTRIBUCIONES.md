@@ -33,6 +33,7 @@ Los commits y PRs llevan el autor real.
 | Secretos | El handler `create` llama al servicio SSM de P6 (`worker/services/tenant-secrets.js`) antes del primer apply; los eventos solo muestran nombres. |
 | **Wizard Crear tenant** (RF-03, RF-07) | `platform_web/src/features/tenants/pages/CreateTenantPage.tsx`, en `/tenants/new` y basado en el mockup del PDF:<br>• **Datos y plan:** tarjetas de plan con límites y respaldo, selector de motor, e identificador generado desde el nombre.<br>• **Configuración:** zona horaria, servidores con sus tamaños, límites y respaldo.<br>• **Revisión:** lo que se creará en AWS, con opción de crear la infraestructura al confirmar.<br>• Resumen lateral en vivo y validación por paso. Los motores sin adaptador quedan como "solo registro".<br>API: `GET /engines` y `backup` en `GET /plans`. Reemplaza al formulario de registro anterior. |
 | **D4/D5** CloudFormation | `infra/cloudformation/tenant.yaml`: el mismo stack que el módulo Terraform (3 EC2 con IMDSv2, EBS cifrado, SG por rol, IAM limitado al prefijo SSM, respaldos opcionales), un stack por tenant.<br>`src/engines/cloudformation.js` (SDK de AWS):<br>• change sets como vista previa, con bloqueo si se perdería el disco de datos;<br>• eventos del stack como logs y error tomado del primer recurso fallido;<br>• reintento que limpia `ROLLBACK_COMPLETE`;<br>• **D5:** suspender y reanudar con la API de EC2.<br>Documentado en `infra/cloudformation/README.md`. |
+| **D3** Pulumi | `infra/pulumi/tenant`: programa en JavaScript con el mismo stack (recursos, nombres, reglas, etiquetas `ManagedBy=pulumi` y precondiciones de red), disco de datos con `protect`.<br>`src/engines/pulumi.js`:<br>• un stack por tenant en `s3://<bucket>/pulumi`, con bloqueo y cifrado (`PULUMI_SECRETS_PROVIDER`);<br>• configuración por stdin;<br>• `preview --json` con bloqueo si se perdería el disco de datos, `up` y outputs;<br>• suspender y reanudar declarativos (`InstanceState`);<br>• eliminar con huella de la vista previa y `state unprotect`.<br>Integrado en el flujo de P6 (`worker/services/pulumi-lifecycle.js`). Documentado en `infra/pulumi/README.md`. |
 | **D7** Registro de versiones (RF-13) | Cada despliegue guarda en `deployments` el motor y su versión, el proveedor AWS, la versión y el commit de las AMIs, el commit de las plantillas, las AMIs, los recursos y los outputs. Se ve en el panel **Infraestructura** del detalle del tenant. |
 
 ### Cómo lo verifiqué
@@ -56,11 +57,17 @@ Los commits y PRs llevan el autor real.
 
 - CloudFormation: `cfn-lint` sin hallazgos y `pnpm test:cloudformation` (10 pruebas con AWS simulado: crear, sin cambios, bloqueo por pérdida de datos, error legible, reintento tras `ROLLBACK_COMPLETE`, suspender/reanudar por EC2, eliminar, validación de AMIs).
 
-Pendiente de probar en AWS: el ciclo integrado del panel con Terraform y OpenTofu y el adaptador de CloudFormation de P2. En la integración con P6, el asistente registra CloudFormation como borrador y en local permite simularlo. El adaptador y la plantilla se documentan en [CloudFormation](infra/cloudformation/README.md).
+- Pulumi:
+  - `pnpm --dir infra/pulumi/tenant test`: 7 pruebas con los mocks de Pulumi. Cubren los recursos y las reglas, el user data igual a la plantilla de P3, la suspensión, la ausencia de bucket de respaldos y las validaciones.
+  - `pnpm test:pulumi`: 11 pruebas del adaptador con un CLI simulado.
+  - Integración con PostgreSQL real: ciclo crear → suspender → reanudar → vista previa → eliminar desde la API.
+  - Prueba de humo con Pulumi 3.272 real y un backend `file://`: crea el stack y ejecuta el programa hasta el proveedor AWS.
+
+Pendiente de probar en AWS: el ciclo integrado del panel con Terraform y OpenTofu y los adaptadores de CloudFormation y Pulumi de P2. En la integración con P6, el asistente registra CloudFormation como borrador y en local permite simularlo. El adaptador y la plantilla se documentan en [CloudFormation](infra/cloudformation/README.md).
 
 ### Pendiente
 
-Pulumi (D3), comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1).
+Comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1). El estado de CloudFormation y de Pulumi ya está descrito en sus README.
 
 ### Qué defiendo en el video
 

@@ -8,7 +8,7 @@ const known = [
     'Otra ejecución tiene bloqueado el estado de este tenant. Espera a que termine; si se interrumpió, un responsable debe revisar el bloqueo (force-unlock) antes de reintentar.',
   ],
   [
-    /No valid credential sources|NoCredentialProviders|failed to refresh cached credentials|could not load credentials|Unable to locate credentials/i,
+    /No valid credential sources|NoCredentialProviders|failed to refresh cached credentials|could not load credentials|Unable to locate credentials|AWS profile .* (?:was )?not found|failed to get shared config profile|InvalidClientTokenId/i,
     'El worker no tiene credenciales de AWS válidas. Configura AWS_PROFILE o las variables AWS_* del proceso del worker.',
   ],
   [

@@ -43,6 +43,12 @@ const schema = z.object({
   IAC_RUNS_DIR: z.string().trim().default(repoPath('.local/runs')),
   IAC_CFN_TEMPLATE: z.string().trim().default(repoPath('infra/cloudformation/tenant.yaml')),
   CFN_POLL_MS: z.coerce.number().int().min(10).max(60000).default(10000),
+  // Pulumi (D3): programa, backend (por defecto s3://<IAC_STATE_BUCKET>/pulumi) y cifrado.
+  IAC_PULUMI_DIR: z.string().trim().default(repoPath('infra/pulumi/tenant')),
+  PULUMI_BIN: z.string().trim().default('pulumi'),
+  PULUMI_BACKEND_URL: z.string().trim().default(''),
+  PULUMI_SECRETS_PROVIDER: z.string().trim().default('passphrase'),
+  PULUMI_CONFIG_PASSPHRASE: z.string().default(''),
   IAC_TIMEOUT_S: z.coerce.number().int().min(300).max(7200).default(3600),
   HEALTH_TIMEOUT_S: z.coerce.number().int().min(1).max(3600).default(900),
   HEALTH_SCRIPT: z.string().trim().min(1).default(repoPath('infra/health/tenant-health.sh')),
