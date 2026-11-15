@@ -1,0 +1,111 @@
+.platform-login {
+  --login-ink: #253b34;
+  --login-body: #5d6d64;
+  --login-paper: #fffefb;
+  --login-line: #e1e7df;
+  --login-control-border: #c8d4cc;
+  --login-accent-soft: color-mix(in srgb, var(--primary), var(--login-paper) 94%);
+  --login-accent-line: color-mix(in srgb, var(--primary), var(--login-paper) 70%);
+  --login-artwork: color-mix(in srgb, var(--primary), transparent 91%);
+  --login-focus: color-mix(in srgb, var(--primary), transparent 82%);
+  --login-danger: #9b3e36;
+  --login-danger-soft: #fcf0ed;
+  --login-shadow: 0 2px 4px rgb(37 59 52 / 3%), 0 12px 36px rgb(37 59 52 / 4%);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 100vh;
+  min-height: 100svh;
+  flex-direction: column;
+  color: var(--login-ink);
+  background: var(--login-paper);
+}
+
+.platform-login-decoration { position: absolute; z-index: -1; inset: 0; overflow: hidden; color: var(--login-artwork); pointer-events: none; }
+.platform-login-artwork { position: absolute; top: -210px; right: -150px; display: block; width: 600px; height: 600px; transform: rotate(-12deg); }
+.platform-login-artwork svg { display: block; width: 100%; height: 100%; }
+.platform-login-circle { position: absolute; bottom: -270px; left: -210px; width: 530px; height: 530px; border-radius: 50%; background: currentColor; }
+.platform-login-orbit { position: absolute; bottom: -345px; left: -285px; width: 680px; height: 680px; border: 1px solid var(--login-accent-line); border-radius: 50%; }
+.platform-login-header { display: flex; width: min(calc(100% - 80px), 1160px); min-height: 104px; align-items: center; justify-content: space-between; gap: 24px; margin-inline: auto; }
+.platform-login-brand { display: inline-flex; flex-shrink: 0; align-items: center; gap: 11px; }
+.platform-login-brand > svg { color: var(--primary); }
+.platform-login-brand > span { font-size: 25px; font-weight: 700; letter-spacing: -0.8px; line-height: 1; }
+.platform-login-brand > span > span { color: var(--primary); }
+.platform-login-brand small { display: block; margin-top: 7px; color: var(--login-body); font-size: 11px; font-weight: 400; letter-spacing: 0.35px; }
+.platform-login-back { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 0; color: var(--login-body); font-size: 13px; }
+.platform-login-back:hover { color: var(--primary); }
+.platform-login-main { display: flex; flex: 1; align-items: center; padding: 48px 0 104px; }
+.platform-login-grid { display: grid; width: min(calc(100% - 80px), 1080px); grid-template-columns: minmax(0, 1fr) 440px; align-items: center; gap: 96px; margin-inline: auto; }
+.platform-login-intro { min-width: 0; padding-bottom: 16px; }
+.platform-login .platform-login-kicker { margin: 0 0 24px; color: var(--primary); font-size: 12px; font-weight: 500; letter-spacing: 0.5px; }
+.platform-login .platform-login-welcome { margin: 0; color: var(--login-ink); font-size: clamp(42px, 4.2vw, 60px); font-weight: 700; line-height: 1.08; letter-spacing: -1.8px; }
+.platform-login-welcome > span { color: var(--primary); }
+.platform-login .platform-login-description { max-width: 350px; margin: 24px 0 32px; color: var(--login-body); font-size: 16px; line-height: 1.8; }
+.platform-login-signature { display: flex; align-items: center; gap: 12px; color: var(--login-body); font-size: 12px; line-height: 1.7; }
+.platform-login-signature > span { width: 28px; height: 1px; flex-shrink: 0; background: var(--primary); }
+.platform-login-panel { min-width: 0; padding: 36px; border: 1px solid var(--login-line); border-radius: 8px; background: var(--login-paper); box-shadow: var(--login-shadow); }
+.platform-login-heading { margin-bottom: 30px; }
+.platform-login-heading > span { color: var(--primary); font-size: 11px; font-weight: 500; }
+.platform-login-heading h1 { margin: 10px 0 10px; color: var(--login-ink); font-size: 30px; font-weight: 700; line-height: 1.2; letter-spacing: -0.8px; }
+.platform-login .platform-login-heading p { margin: 0; color: var(--login-body); font-size: 13px; line-height: 1.8; }
+.platform-login-form { display: flex; flex-direction: column; gap: 22px; }
+.platform-login-field { display: flex; min-width: 0; flex-direction: column; gap: 9px; }
+.platform-login-field label { display: block; color: var(--login-ink); font-size: 13px; font-weight: 500; }
+.platform-login-input { display: flex; height: 48px; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid var(--login-control-border); border-radius: 5px; color: var(--login-body); background: var(--login-paper); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.platform-login-input > svg { flex-shrink: 0; }
+.platform-login-input:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--login-focus); }
+.platform-login-input input { width: 100%; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; outline: 0; color: var(--login-ink); background: transparent; font-size: 14px; }
+.platform-login-input input:focus { border: 0; outline: 0; }
+.platform-login-input input::placeholder { color: var(--login-body); opacity: 0.85; }
+.platform-login-password-toggle { display: grid; flex-shrink: 0; place-items: center; width: 32px; height: 32px; margin-right: -4px; padding: 0; border: 0; border-radius: 4px; color: var(--login-body); background: transparent; }
+.platform-login-password-toggle:hover:not(:disabled) { color: var(--primary); background: var(--login-accent-soft); }
+.platform-login-submit { display: flex; width: 100%; min-height: 46px; align-items: center; justify-content: space-between; gap: 14px; margin-top: 4px; padding: 12px 16px; border: 1px solid var(--primary); border-radius: 5px; color: var(--login-paper); background: var(--primary); font-size: 13px; font-weight: 500; transition: background 150ms ease; }
+.platform-login-submit:hover:not(:disabled) { border-color: var(--primary-dark); background: var(--primary-dark); }
+.platform-login-input input:disabled { opacity: 0.65; cursor: wait; }
+.platform-login-submit:disabled { cursor: wait; }
+.platform-login .platform-login-help { margin: 26px 0 0; padding-top: 22px; border-top: 1px solid var(--login-line); color: var(--login-body); font-size: 11px; line-height: 1.8; text-align: center; }
+.platform-login .platform-login-feedback { margin: 0; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--login-danger), transparent 75%); border-radius: 5px; color: var(--login-danger); background: var(--login-danger-soft); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.platform-login-field small { color: var(--login-danger); font-size: 12px; line-height: 1.6; }
+.platform-login-input.is-invalid { border-color: var(--login-danger); }
+.platform-login a:focus-visible, .platform-login button:focus-visible { outline: 3px solid var(--login-focus); outline-offset: 4px; }
+
+@media (max-width: 1100px) {
+  .platform-login-header, .platform-login-grid { width: calc(100% - 64px); }
+  .platform-login-grid { grid-template-columns: minmax(0, 1fr) 410px; gap: 48px; }
+  .platform-login-panel { padding: 32px; }
+  .platform-login .platform-login-welcome { font-size: 46px; }
+}
+
+@media (max-width: 820px) {
+  .platform-login-header { min-height: 94px; }
+  .platform-login-main { padding: 28px 0 64px; }
+  .platform-login-grid { width: min(calc(100% - 64px), 440px); grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .platform-login-intro { padding-bottom: 0; }
+  .platform-login .platform-login-kicker { margin-bottom: 14px; }
+  .platform-login .platform-login-welcome { font-size: 38px; }
+  .platform-login .platform-login-description { max-width: 400px; margin-block: 16px 0; font-size: 14px; line-height: 1.8; }
+  .platform-login-signature { display: none; }
+  .platform-login-artwork { top: -145px; right: -200px; width: 440px; height: 440px; }
+  .platform-login-circle { bottom: -170px; left: -230px; width: 400px; height: 400px; }
+  .platform-login-orbit { bottom: -230px; left: -290px; width: 520px; height: 520px; }
+}
+
+@media (max-width: 480px) {
+  .platform-login-header { width: calc(100% - 40px); min-height: 88px; gap: 14px; }
+  .platform-login-brand { gap: 8px; }
+  .platform-login-brand > svg { width: 23px; height: 23px; }
+  .platform-login-brand > span { font-size: 21px; }
+  .platform-login-brand small { margin-top: 5px; font-size: 10px; }
+  .platform-login-back { gap: 5px; font-size: 11px; }
+  .platform-login-grid { width: calc(100% - 40px); gap: 26px; }
+  .platform-login-main { align-items: flex-start; padding: 24px 0 40px; }
+  .platform-login .platform-login-welcome { font-size: 34px; letter-spacing: -1px; }
+  .platform-login .platform-login-description { margin-top: 14px; font-size: 13px; }
+  .platform-login-panel { padding: 26px 22px; }
+  .platform-login-heading { margin-bottom: 26px; }
+  .platform-login-heading h1 { font-size: 28px; }
+  .platform-login-input input { font-size: 16px; }
+  .platform-login-artwork { top: -95px; right: -140px; width: 300px; height: 300px; }
+  .platform-login-circle { bottom: -135px; left: -150px; width: 270px; height: 270px; }
+  .platform-login-orbit { bottom: -175px; left: -190px; width: 350px; height: 350px; }
+}

@@ -14,6 +14,15 @@ La tipografía base es **VTEX Trust**, copiada de Attendance y cargada desde
 `src/assets/fonts/VTEXTrust` mediante `src/styles/fonts.css`. La familia se
 configura con `--font-sans` en `src/index.css`.
 
+## Diseño del acceso
+
+El login (`/login`) tiene sus estilos en `src/features/auth/pages/login.css`.
+Comparte el verde `--primary` y VTEX Trust con la portada. Sus colores de texto,
+fondo y decoración se definen en las variables `--login-*`.
+
+El formulario conserva las validaciones y la autenticación con cookie de sesión,
+muestra los errores de acceso y permite mostrar u ocultar la contraseña.
+
 ## Desarrollo local
 
 ```bash

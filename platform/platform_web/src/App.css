@@ -716,127 +716,6 @@ progress::-moz-progress-bar {
   color: #7e9487;
   font-size: 0.9rem;
 }
-.login-page {
-  display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  min-height: 100vh;
-  background: white;
-}
-.login-story {
-  background: #123d37;
-  color: white;
-  padding: 45px 55px 30px;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-}
-.login-story::after {
-  content: '';
-  position: absolute;
-  width: 520px;
-  height: 520px;
-  border: 1px solid #2b5747;
-  border-radius: 50%;
-  right: -300px;
-  top: 60px;
-  pointer-events: none;
-}
-.login-message {
-  max-width: 490px;
-  margin: auto 0;
-  padding: 70px 0;
-  position: relative;
-  z-index: 1;
-}
-.login-message .eyebrow {
-  color: #a2c28d;
-  font-size: 0.58rem;
-}
-.login-message h1 {
-  font-size: clamp(2.8rem, 4.7vw, 4.5rem);
-  line-height: 1.1;
-  letter-spacing: -0.055em;
-  margin: 23px 0;
-}
-.login-message > p {
-  color: #9ebcad;
-  max-width: 355px;
-  font-size: 0.9rem;
-}
-.orbit-card {
-  margin-top: 50px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  border: 1px solid #386250;
-  background: #1b493d;
-  padding: 20px 18px;
-  border-radius: 12px;
-}
-.orbit-card > svg {
-  color: #c5db9c;
-  flex-shrink: 0;
-}
-.orbit-card strong {
-  display: block;
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-.orbit-card div span {
-  display: block;
-  color: #a3bba5;
-  font-size: 0.63rem;
-  margin-top: 7px;
-  line-height: 1.6;
-}
-.orbit-check {
-  margin-left: auto;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  background: #c9dfa3;
-  color: #3e6241;
-  flex-shrink: 0;
-}
-.login-footnote {
-  font-size: 0.63rem;
-  color: #80a794;
-}
-.login-form-area {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 45px;
-}
-.login-form {
-  width: 100%;
-  max-width: 355px;
-}
-.login-form h2 {
-  font-size: 2rem;
-  letter-spacing: -0.04em;
-  margin-bottom: 12px;
-}
-.login-form > p {
-  font-size: 0.8rem;
-  margin-bottom: 32px;
-}
-.login-form label {
-  margin-bottom: 20px;
-}
-.login-form .button {
-  margin-top: 9px;
-  padding: 14px;
-}
-.login-form .login-help {
-  margin: 25px 0 0;
-  text-align: center;
-  font-size: 0.68rem;
-  color: #94a197;
-}
 @media (max-width: 1100px) {
   .platform-layout {
     grid-template-columns: 195px minmax(0, 1fr);
@@ -855,9 +734,6 @@ progress::-moz-progress-bar {
   }
   .page-heading {
     align-items: flex-start;
-  }
-  .login-story {
-    padding-inline: 35px;
   }
   .overview-note {
     display: none;
@@ -938,19 +814,6 @@ progress::-moz-progress-bar {
   }
   .workspace footer span {
     display: none;
-  }
-  .login-page {
-    grid-template-columns: 1fr;
-  }
-  .login-story {
-    padding: 24px;
-  }
-  .login-message,
-  .login-footnote {
-    display: none;
-  }
-  .login-form-area {
-    padding: 60px 25px;
   }
   .log-console {
     padding: 12px;
