@@ -63,11 +63,11 @@ Los commits y PRs llevan el autor real.
   - Integración con PostgreSQL real: ciclo crear → suspender → reanudar → vista previa → eliminar desde la API.
   - Prueba de humo con Pulumi 3.272 real y un backend `file://`: crea el stack y ejecuta el programa hasta el proveedor AWS.
 
-Pendiente de probar en AWS: el ciclo integrado del panel con Terraform y OpenTofu y los adaptadores de CloudFormation y Pulumi de P2. En la integración con P6, el asistente registra CloudFormation como borrador y en local permite simularlo. El adaptador y la plantilla se documentan en [CloudFormation](infra/cloudformation/README.md).
+- **AWS real desde el panel (15/11/2026):** un tenant por motor con Terraform, CloudFormation y Pulumi, en una cuenta propia con bucket de estado, red base y AMIs 0.3.0 nuevas. Los tres crearon el tenant sano en unos 5 minutos, suspendieron y reanudaron conservando las mismas EC2 y el mismo disco de datos, y se eliminaron sin dejar recursos. Tiempos y detalle en [Motores IaC](docs/motores-iac.md#4-prueba-real-en-aws-desde-el-panel). Falta OpenTofu en AWS real.
 
 ### Pendiente
 
-Comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1). El estado de CloudFormation y de Pulumi ya está descrito en sus README.
+Diagrama (J1, con P1) y OpenTofu en AWS real. La comparación técnica (D6) y el documento de estado por motor (A6) están en [docs/motores-iac.md](docs/motores-iac.md).
 
 ### Qué defiendo en el video
 

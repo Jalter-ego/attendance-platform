@@ -49,7 +49,7 @@ P2 define el detalle de `resources` y las interfaces de los adaptadores; P6 defi
 - **`tool_versions`**: `engine`, `terraform` o `tofu`, `provider_aws`, `image_version`, `image_git_commit`, `templates_commit` y `module`.
 - **`log_ref`**: `operations/<id>`, los eventos de la operación en la plataforma.
 - **Destino:** el resultado se guarda en `operations.result` y, salvo en `destroy`, en una fila de `deployments`. Las URLs vigentes son las del despliegue más reciente: al suspender quedan en `null` y al reanudar se reemplazan.
-- **Directorio y estado:** el worker ejecuta el módulo desde una copia por tenant (`.local/runs/<tenant_id>/<env>/module`) con `cloud_init_template_path` absoluto, como pide el README del módulo, y la clave de estado `tenants/<tenant_id>/<env>/terraform.tfstate`. Ver [Motores IaC](../platform/README.md#motores-iac-p2).
+- **Directorio y estado:** el worker ejecuta el módulo desde una copia por tenant (`.local/runs/<tenant_id>/<env>/module`) con `cloud_init_template_path` absoluto, como pide el README del módulo, y la clave de estado `tenants/<tenant_id>/<env>/terraform.tfstate`. Ver [Motores IaC](motores-iac.md).
 
 ## Estado y concurrencia
 

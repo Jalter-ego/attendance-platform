@@ -2,7 +2,7 @@
 
 El panel `platform_web/` usa React, TypeScript y Vite con el diseño verde del equipo. Incluye la portada, el asistente de P2 para crear instituciones, Respaldos de P3, Planes de P4 y las vistas operativas de P6. Consume la API Express de `platform_api/`. La API y el worker corren como procesos separados y comparten PostgreSQL.
 
-**Crear tenant** puede registrar la institución como borrador o registrarla y encolar el aprovisionamiento en una sola transacción. El modo predeterminado `local` simula recursos, URLs, comprobaciones de salud y respaldos. El modo `integration` usa los motores Terraform, OpenTofu o CloudFormation y requiere una base separada y la configuración de infraestructura del equipo.
+**Crear tenant** puede registrar la institución como borrador o registrarla y encolar el aprovisionamiento en una sola transacción. El modo predeterminado `local` simula recursos, URLs, comprobaciones de salud y respaldos. El modo `integration` usa los motores Terraform, OpenTofu, CloudFormation o Pulumi y requiere una base separada y la configuración de infraestructura del equipo.
 
 ## Arrancar en local
 
@@ -125,7 +125,7 @@ platform_web/src/
   lib/                       Cliente HTTP
 ```
 
-- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](#motores-iac-p2)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. CloudFormation ([plantilla](../infra/cloudformation/README.md)) y Pulumi ([programa](../infra/pulumi/README.md)) conectados. Registrar no equivale a aprovisionar.
+- **P2:** adaptadores Terraform/OpenTofu conectados al worker (operaciones `create`, `suspend`, `resume`, `destroy`; ver [Motores IaC](../docs/motores-iac.md)). Wizard **Crear tenant** de 3 pasos en `/tenants/new`. CloudFormation ([plantilla](../infra/cloudformation/README.md)) y Pulumi ([programa](../infra/pulumi/README.md)) conectados. Registrar no equivale a aprovisionar.
 - **P1:** el ejecutor real ya existe: falta la UI de suspender/reanudar y el modal de eliminación con la vista previa (`adapter.preview(ctx, {destroy: true})`); la API ya exige `confirm` al eliminar.
 - **P3/P5:** añadir sus módulos/pantallas sobre el layout existente y sus rutas en `App.tsx`.
 - **P4:** pantalla **Planes** y API `/plans` (ver [Planes](#planes-p4)). Cada tenant guarda la copia del plan con la que se creó y los motores despliegan esa copia.
