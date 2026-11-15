@@ -1,0 +1,98 @@
+.tenant-directory-heading { display: flex; align-items: center; justify-content: space-between; gap: 32px; margin-bottom: 34px; }
+.tenant-directory .tenant-directory-kicker { margin: 0 0 14px; color: var(--primary); font-size: 12px; font-weight: 500; letter-spacing: 0.4px; }
+.tenant-directory-heading h1 { margin: 0 0 12px; color: var(--panel-ink); font-size: 36px; font-weight: 700; line-height: 1.15; letter-spacing: -1px; }
+.tenant-directory-heading p { margin-bottom: 0; color: var(--panel-body); font-size: 14px; line-height: 1.8; }
+.tenant-directory .button { min-height: 40px; border-color: var(--panel-control-line); border-radius: 5px; color: var(--panel-ink); background: var(--panel-paper); font-size: 12px; font-weight: 500; }
+.tenant-directory .button:hover:not(:disabled) { border-color: var(--panel-accent-line); color: var(--primary); background: var(--panel-accent-soft); }
+.tenant-directory .tenant-register { min-height: 44px; flex-shrink: 0; border-color: var(--primary); color: var(--panel-paper); background: var(--primary); }
+.tenant-directory .tenant-register:hover:not(:disabled) { border-color: var(--primary-dark); color: var(--panel-paper); background: var(--primary-dark); }
+.tenant-directory-panel { min-width: 0; border: 1px solid var(--panel-line); border-radius: 8px; background: var(--panel-paper); box-shadow: 0 2px 3px rgb(37 59 52 / 2%); }
+.tenant-directory-panel-heading { display: flex; min-height: 80px; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--panel-line); }
+.tenant-directory-title { display: flex; align-items: center; gap: 12px; }
+.tenant-directory-title h2 { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.5; letter-spacing: -0.25px; }
+.tenant-directory-count { display: inline-flex; min-width: 26px; height: 24px; align-items: center; justify-content: center; padding-inline: 7px; border: 1px solid var(--panel-accent-line); border-radius: 5px; color: var(--primary); background: var(--panel-accent-soft); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tenant-directory-updates { display: flex; flex-shrink: 0; align-items: center; gap: 12px; color: var(--panel-body); font-size: 10px; }
+.tenant-refresh { display: grid; width: 34px; height: 34px; flex-shrink: 0; place-items: center; padding: 0; border: 1px solid var(--panel-line); border-radius: 5px; color: var(--panel-body); background: transparent; }
+.tenant-refresh:hover:not(:disabled) { border-color: var(--panel-accent-line); color: var(--primary); background: var(--panel-accent-soft); }
+.tenant-directory-toolbar { display: grid; grid-template-columns: minmax(210px, 1.6fr) repeat(3, minmax(145px, 1fr)); gap: 16px; padding: 24px; }
+.tenant-directory-toolbar label { min-width: 0; gap: 9px; color: var(--panel-body); font-size: 11px; font-weight: 400; }
+.tenant-search-input { display: flex; min-height: 42px; align-items: center; gap: 10px; padding-inline: 12px; border: 1px solid var(--panel-control-line); border-radius: 5px; color: var(--panel-body); background: var(--panel-paper); }
+.tenant-search-input > svg { flex-shrink: 0; }
+.tenant-search-input input { width: 100%; min-width: 0; height: 40px; padding: 0; border: 0; border-radius: 0; color: var(--panel-ink); background: transparent; font-size: 12px; }
+.tenant-directory .tenant-search-input input:focus { outline: 0; }
+.tenant-search-input:focus-within { border-color: var(--primary); outline: 3px solid var(--panel-focus); outline-offset: 2px; }
+.tenant-search-input input::placeholder { color: var(--panel-body); opacity: 0.8; }
+.tenant-filter-control select { width: 100%; min-height: 42px; padding: 10px; border-color: var(--panel-control-line); border-radius: 5px; color: var(--panel-ink); background: var(--panel-paper); font-size: 12px; }
+.tenant-active-filters, .tenant-filter-feedback { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -4px 24px 20px; color: var(--panel-body); font-size: 11px; line-height: 1.7; }
+.tenant-text-button { display: inline-flex; min-height: 32px; flex-shrink: 0; align-items: center; gap: 5px; padding: 5px 0; border: 0; color: var(--primary); background: transparent; font-size: 11px; }
+.tenant-text-button:hover { text-decoration: underline; text-underline-offset: 4px; }
+.tenant-directory-error { margin: 0 24px 20px; }
+.tenant-directory-table { overflow-x: auto; border-radius: 0 0 8px 8px; scrollbar-width: thin; scrollbar-color: var(--panel-accent-line) transparent; }
+.tenant-directory-table table { min-width: 780px; }
+.tenant-directory-table th { padding: 14px 20px; border-block-color: var(--panel-line); color: var(--panel-body); background: var(--panel-canvas); font-size: 11px; font-weight: 500; }
+.tenant-directory-table td { padding: 22px 20px; border-bottom-color: var(--panel-line); font-size: 12px; }
+.tenant-directory-table :is(th, td):first-child { padding-left: 24px; }
+.tenant-directory-table :is(th, td):last-child { width: 1%; padding-right: 24px; }
+.tenant-directory-table tbody tr:hover { background: var(--panel-accent-soft); }
+.tenant-directory-name { display: inline-flex; align-items: center; gap: 13px; }
+.tenant-directory-initials { display: grid; width: 40px; height: 42px; flex-shrink: 0; place-items: center; border: 1px solid var(--panel-line); border-radius: 6px; color: var(--primary); background: var(--panel-accent-soft); font-size: 12px; font-weight: 500; }
+.tenant-directory-name strong { display: block; max-width: 300px; color: var(--panel-ink); font-size: 13px; font-weight: 500; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.tenant-directory-name:hover strong { color: var(--primary); text-decoration: underline; text-underline-offset: 4px; }
+.tenant-directory-name small { display: block; max-width: 300px; margin-top: 5px; color: var(--panel-body); font-size: 11px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.tenant-directory-plan { color: var(--panel-ink); }
+.tenant-directory-environment { display: inline-flex; align-items: center; gap: 6px; color: var(--panel-body); font-size: 11px; }
+.tenant-directory-environment::before { width: 5px; height: 5px; border: 1px solid currentColor; border-radius: 50%; content: ''; }
+.tenant-directory-environment[data-environment='prod']::before { background: currentColor; }
+.tenant-directory-engine { color: var(--panel-body); }
+.tenant-directory .status-badge { gap: 7px; padding: 6px 10px; font-size: 11px; }
+.tenant-detail-link { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--panel-line); border-radius: 5px; color: var(--panel-body); }
+.tenant-detail-link:hover { border-color: var(--panel-accent-line); color: var(--primary); background: var(--panel-paper); }
+.tenant-directory-empty { display: flex; min-height: 320px; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 24px; border-top: 1px solid var(--panel-line); text-align: center; }
+.tenant-empty-icon { display: grid; width: 62px; height: 64px; place-items: center; margin-bottom: 4px; border: 1px solid var(--panel-accent-line); border-radius: 8px; color: var(--primary); background: var(--panel-accent-soft); }
+.tenant-directory-empty h3 { margin: 0; color: var(--panel-ink); font-size: 18px; font-weight: 600; letter-spacing: -0.35px; line-height: 1.5; }
+.tenant-directory-empty p { max-width: 390px; margin: 0; color: var(--panel-body); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.tenant-directory-empty .button { margin-top: 6px; }
+.tenant-directory-loading { padding: 0 24px; border-top: 1px solid var(--panel-line); }
+.tenant-loading-row { display: grid; min-height: 87px; grid-template-columns: 2fr 1fr 1fr; align-items: center; gap: 40px; border-bottom: 1px solid var(--panel-line); }
+.tenant-loading-row:last-child { border-bottom: 0; }
+.tenant-loading-row > span { height: 12px; border-radius: 3px; background: var(--panel-accent-soft); }
+.tenant-loading-row > span:first-child { width: 75%; height: 25px; }
+.tenant-loading-row > span:last-child { width: 65%; justify-self: end; }
+.tenant-directory-pagination { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 24px; border-top: 1px solid var(--panel-line); }
+.tenant-directory-pagination p { margin: 0; color: var(--panel-body); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tenant-directory-pagination strong { color: var(--panel-ink); font-weight: 500; }
+.tenant-directory-pagination > div { display: flex; gap: 8px; }
+.tenant-directory-pagination .button { min-height: 34px; padding: 7px 10px; font-size: 11px; }
+.tenant-directory .tenant-directory-note { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 22px 0 0; color: var(--panel-body); font-size: 11px; line-height: 1.7; }
+.tenant-directory-note svg { flex-shrink: 0; }
+
+@media (max-width: 1200px) {
+  .tenant-directory-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tenant-search-control { grid-column: 1 / -1; }
+  .tenant-directory-heading { gap: 20px; align-items: flex-start; }
+  .tenant-directory-heading h1 { font-size: 34px; }
+  .tenant-directory-heading p { font-size: 13px; }
+  .tenant-directory-updates > span { display: none; }
+}
+
+@media (max-width: 560px) {
+  .tenant-directory-heading { flex-direction: column; gap: 22px; margin-bottom: 26px; }
+  .tenant-directory-heading h1 { font-size: 32px; }
+  .tenant-directory .tenant-directory-kicker { margin-bottom: 12px; font-size: 11px; }
+  .tenant-directory .tenant-register { min-height: 42px; }
+  .tenant-directory-panel-heading { min-height: 72px; gap: 12px; padding: 18px 16px; }
+  .tenant-directory-title { gap: 8px; }
+  .tenant-directory-title h2 { font-size: 14px; }
+  .tenant-directory-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; padding: 20px 16px; }
+  .tenant-environment-filter { grid-column: 1 / -1; }
+  .tenant-search-input input, .tenant-filter-control select { font-size: 16px; }
+  .tenant-search-input { padding-inline: 10px; }
+  .tenant-active-filters, .tenant-filter-feedback { margin-inline: 16px; }
+  .tenant-directory-error { margin-inline: 16px; }
+  .tenant-directory-empty { min-height: 300px; padding-inline: 20px; }
+  .tenant-directory-empty h3 { font-size: 17px; }
+  .tenant-directory-pagination { flex-wrap: wrap; gap: 14px; padding: 18px 16px; }
+  .tenant-directory-pagination > div { margin-left: auto; }
+  .tenant-directory .tenant-directory-note { justify-content: flex-start; align-items: flex-start; font-size: 10px; }
+  .tenant-directory-note svg { margin-top: 1px; }
+}

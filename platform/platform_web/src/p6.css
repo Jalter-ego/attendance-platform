@@ -49,27 +49,9 @@
 .p6-deployment summary { cursor: pointer; font-weight: 650; }
 .p6-deployment .infra-versions { margin-top: .65rem; }
 
-.p6-landing { background: #f5f8f5; color: #163c34; min-height: 100dvh; }
-.p6-landing-container { width: min(100% - 2rem, 73rem); margin-inline: auto; }
-.p6-landing > header { background: #fff; border-bottom: 1px solid #dce8e1; }
-.p6-landing-header { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem; justify-content: space-between; padding-block: .85rem; }
-.p6-landing-header .brand { color: #163c34; }
-.p6-landing-header .brand small { color: #426d60; }
-.p6-landing-header nav { display: flex; flex-wrap: wrap; gap: .85rem; }
-.p6-landing-header a:not(.button) { color: #163c34; }
-.p6-public-hero { display: grid; align-items: center; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: clamp(1rem, 4vw, 3rem); padding-block: clamp(2rem, 8vw, 6rem); }
-.p6-public-hero h1 { font-size: clamp(2.35rem, 5.2vw, 4.4rem); line-height: 1.03; margin: 0; text-wrap: balance; }
-.p6-public-hero p { margin: 1.05rem 0 1.35rem; max-width: 38rem; }
-.p6-public-hero img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 1.15rem; }
-.p6-public-section { padding-block: 1.4rem; border-top: 1px solid #d8e4dd; }
-.p6-public-section h2 { margin-bottom: .35rem; font-size: clamp(1.45rem, 3vw, 2.2rem); }
 .p6-public-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .9rem; margin-top: 1.1rem; }
 .p6-public-grid p { margin-top: .35rem; }
-.p6-landing > footer { margin-top: 1.25rem; padding-block: 1rem; border-top: 1px solid #d8e4dd; }
-.p6-landing > footer .p6-landing-container { display: flex; flex-wrap: wrap; gap: .65rem; justify-content: space-between; }
-.login-form .back-link { display: inline-flex; align-items: center; gap: .35rem; margin-bottom: .65rem; }
 
 @media (max-width: 720px) {
-  .p6-public-hero, .p6-public-grid { grid-template-columns: minmax(0, 1fr); }
-  .p6-landing-header nav { order: 2; width: 100%; }
+  .p6-public-grid { grid-template-columns: minmax(0, 1fr); }
 }
