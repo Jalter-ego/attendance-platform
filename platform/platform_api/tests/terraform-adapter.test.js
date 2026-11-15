@@ -158,6 +158,19 @@ test('create preps SSM, retries the same state and pinned AMIs, hides private CL
   await assert.rejects(fixture.perform('create', { config: { ...fixture.config, PLATFORM_STATE_BUCKET: 'new-state-bucket' } }), { code: 'IAC_STATE_CHANGED' });
 });
 
+test('OpenTofu puede convertir la identidad del proveedor conservando el lock por tenant', async (t) => {
+  const fixture = await setup(t);
+  await writeFile(join(fixture.repoRoot, 'infra/terraform/tenant/.terraform.lock.hcl'), 'fake lock');
+  const options = { tenant: { ...tenant, engine: 'tofu' } };
+  const created = await fixture.perform('create', options);
+  fixture.configure({ changes: [] });
+  await fixture.perform('suspend', { ...options, deployment: created.deployment });
+  const inits = fixture.calls.filter(({ action }) => action === 'init');
+  assert.equal(inits.length, 2);
+  assert.ok(inits.every(({ options }) => !options.includes('-lockfile=readonly')));
+  assert.ok(inits.every(({ backend }) => backend.includes('tenants/colegio-a/test/terraform.tfstate')));
+});
+
 test('plan-change rejects drift and delete requires the matching real plan', async (t) => {
   const fixture = await setup(t);
   const initial = await fixture.perform('create');

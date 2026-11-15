@@ -111,6 +111,9 @@ export async function runLifecycle(context) {
   } else if (tenant.engine === 'cloudformation') {
     const { runCloudFormationLifecycle } = await import('./cloudformation-lifecycle.js');
     outcome = await runCloudFormationLifecycle(options);
+  } else if (tenant.engine === 'pulumi') {
+    const { runPulumiLifecycle } = await import('./pulumi-lifecycle.js');
+    outcome = await runPulumiLifecycle(options);
   } else {
     const { runTerraformOperation } = await import('./terraform-adapter.js');
     outcome = await runTerraformOperation(options);

@@ -8,6 +8,7 @@ import { BACKUP_BY_PLAN } from '../../engines/tenant-input.js';
 import { runCommand } from './command-runner.js';
 import { ensureTenantSecrets } from './tenant-secrets.js';
 import { OperationError } from '../errors.js';
+import { explainEngineError } from '../../engines/errors.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
 const roles = ['frontend', 'backend', 'db'];
@@ -160,11 +161,12 @@ function variablesFor(context, base, image) {
   };
 }
 
-function terraformEnv() {
+function terraformEnv(cacheDirectory) {
   const extra = Object.fromEntries(Object.keys(process.env)
     .filter((name) => /^TF_(?:CLI_ARGS|VAR_|WORKSPACE|DATA_DIR)/i.test(name))
     .map((name) => [name, undefined]));
-  return { ...extra, TF_WORKSPACE: 'default', TF_IN_AUTOMATION: '1', CHECKPOINT_DISABLE: '1' };
+  return { ...extra, TF_WORKSPACE: 'default', TF_IN_AUTOMATION: '1', CHECKPOINT_DISABLE: '1',
+    ...(cacheDirectory ? { TF_PLUGIN_CACHE_DIR: cacheDirectory } : {}) };
 }
 
 function publicTerraformProgress(line) {
@@ -296,6 +298,10 @@ async function verifyHealth({ run, config, tenant, base, repoRoot, urls, instanc
       '--region', tenant.region, '--project', base.project_name, '--url', urls.frontend, '--timeout', String(timeout), '--boot'],
     env: { MSYS_NO_PATHCONV: '1', AWS_CLI_OUTPUT_ENCODING: 'UTF-8' },
     acceptedExitCodes: [0, 1], timeoutMs: (timeout + 220) * 1000, captureStdout: true, logStdout: false,
+      onLine: (line, stream) => {
+        if (/^(== |\s+intento |ERROR: falta )/.test(line))
+          return report(line, { level: stream === 'stderr' ? 'warning' : 'info' });
+      },
   });
   requireValue(reply.exitCode === 0, 'IAC_UNHEALTHY',
     'La infraestructura fue aplicada, pero la aplicación aún no responde correctamente. Reintenta sobre el mismo estado.');
@@ -323,7 +329,8 @@ async function verifyHealth({ run, config, tenant, base, repoRoot, urls, instanc
 
 function toolVersions(detail, engine, deployment, image, operation) {
   const cliVersion = detail?.tofu_version ?? detail?.terraform_version;
-  const provider = detail?.provider_selections?.['registry.terraform.io/hashicorp/aws'];
+  const provider = detail?.provider_selections?.['registry.terraform.io/hashicorp/aws']
+    ?? detail?.provider_selections?.['registry.opentofu.org/hashicorp/aws'];
   const versions = {
     [engine]: versionPattern.test(cliVersion ?? '') ? cliVersion : engine,
     ...(versionPattern.test(provider ?? '') && { provider_aws: provider }),
@@ -404,6 +411,8 @@ export async function runTerraformOperation(context, {
   }
 
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  const cacheDirectory = resolve(config.IAC_RUNS_DIR || join(repoRoot, '.local/runs'), '.plugin-cache', tenant.engine);
+  await mkdir(cacheDirectory, { recursive: true });
   const storedBinding = await writeOnce(join(directory, 'state-binding.json'), binding);
   requireValue(digest(storedBinding) === digest(binding), 'IAC_STATE_CHANGED',
     'La región, motor o bucket del estado del tenant cambió. Restaura la configuración original o migra el estado.');
@@ -420,18 +429,26 @@ export async function runTerraformOperation(context, {
       .map(([key, value]) => `${key} = ${JSON.stringify(value)}\n`).join(''), { mode: 0o600 });
     const binary = (tenant.engine === 'tofu' ? config.TOFU_BIN : config.TERRAFORM_BIN) || tenant.engine;
     const script = /\.m?js$/i.test(binary);
-    const cli = (args, options = {}) => run({
+    const cli = async (args, options = {}) => {
+      const stderr = [];
+      try { return await run({
       command: script ? process.execPath : binary,
-      args: script ? [binary, ...args] : args, cwd, signal, env: terraformEnv(), timeoutMs: (config.IAC_TIMEOUT_S ?? 3600) * 1000,
-      onLine: async (line) => {
+      args: script ? [binary, ...args] : args, cwd, signal, env: terraformEnv(cacheDirectory), timeoutMs: (config.IAC_TIMEOUT_S ?? 3600) * 1000,
+      onLine: async (line, stream) => {
+        if (stream === 'stderr') { stderr.push(line); if (stderr.length > 60) stderr.shift(); }
         const progress = publicTerraformProgress(line);
         if (progress) await report(progress);
       },
       ...options,
-    });
+      }); } catch (error) {
+        if (error.code === 'COMMAND_FAILED')
+          throw new OperationError('ENGINE_FAILED', explainEngineError(stderr, tenant.engine === 'tofu' ? 'OpenTofu' : 'Terraform'));
+        throw error;
+      }
+    };
     await report('Inicializando el backend S3 del tenant con bloqueo de estado.', { stage: 'Inicializando IaC', progress: 15 });
     await cli(['init', '-input=false', '-no-color', '-lock-timeout=5m',
-      ...(locked ? ['-lockfile=readonly'] : []), '-backend-config=tenant.backend.hcl']);
+      ...(locked && tenant.engine !== 'tofu' ? ['-lockfile=readonly'] : []), '-backend-config=tenant.backend.hcl']);
     const lockPath = join(cwd, '.terraform.lock.hcl');
     const lock = await readFile(lockPath, 'utf8');
     await copyFile(lockPath, join(directory, '.terraform.lock.hcl'));

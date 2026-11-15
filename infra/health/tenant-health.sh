@@ -44,6 +44,7 @@ export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION" MSYS_NO_PATHCONV=1
 # AWS CLI en Windows: sin UTF-8 no puede mostrar los acentos de boot.json (probado por P3).
 export AWS_CLI_OUTPUT_ENCODING=UTF-8
 command -v curl >/dev/null || die "falta curl"
+if $BOOT; then command -v jq >/dev/null || die "falta jq para consultar las versiones por SSM"; fi
 
 # AWS CLI en Windows (worker con Git Bash) devuelve \r\n: se limpia todo lo que se lee de ella.
 aws_text() { aws "$@" --output text | tr -d '\r'; }

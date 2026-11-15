@@ -120,7 +120,7 @@ platform_web/src/
   lib/                       Cliente HTTP
 ```
 
-- **P1/P2/P6:** el ciclo completo del worker usa Terraform/OpenTofu. El [adaptador y la plantilla de CloudFormation de P2](../infra/cloudformation/README.md) se usan para crear, suspender, reanudar y eliminar con vista previa. La actualización y el cambio de plan con CloudFormation quedan pendientes. Pulumi permite registro en integración. El modo local simula todos los motores.
+- **P1/P2/P6:** el ciclo completo del worker usa Terraform/OpenTofu. El [adaptador y la plantilla de CloudFormation de P2](../infra/cloudformation/README.md) y el [programa Pulumi](../infra/pulumi/README.md) se usan para crear tres EC2, suspender, reanudar y eliminar con vista previa. Actualización y cambio de plan no están habilitados para CloudFormation/Pulumi. El modo local simula todos los motores.
 - **P3/P4/P5:** los respaldos reales usan el script de P3; el worker usa los scripts de actualización y salud de P4. Alertas y resultados de seguridad se reciben mediante el token opcional de servicio.
 
 Las contraseñas se guardan con scrypt. En sesiones solo se conserva el hash del token. El rol `tenant_admin` limita la lectura a su institución. El administrador de plataforma gestiona esas cuentas, edita el catálogo y consulta la auditoría. El historial combina el estado de los trabajos con registros de cambios de acceso, catálogo, registro de instituciones y solicitudes de cancelación.

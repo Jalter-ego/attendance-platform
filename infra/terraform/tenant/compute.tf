@@ -119,6 +119,12 @@ resource "aws_instance" "frontend" {
 
   tags = { Name = "${local.resource_prefix}-frontend", Role = "frontend" }
 
+  # EC2 reports no public association while stopped. Keep the launch setting;
+  # stop/start assigns a new public IP without replacing the tenant's instance.
+  lifecycle {
+    ignore_changes = [associate_public_ip_address]
+  }
+
   depends_on = [
     terraform_data.prerequisites,
     aws_iam_role_policy.app_ssm_agent,

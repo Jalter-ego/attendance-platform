@@ -44,9 +44,10 @@ locals {
 }
 
 source "amazon-ebs" "ubuntu" {
-  region        = var.region
-  instance_type = var.build_instance_type
-  ssh_username  = "ubuntu"
+  region                                    = var.region
+  instance_type                             = var.build_instance_type
+  ssh_username                              = "ubuntu"
+  temporary_security_group_source_public_ip = true
 
   # Vacío = VPC por defecto con SG temporal (así se construyó la 0.1.0).
   # Con la red de P1: subnet_id = public_subnet_id y security_group_id = packer_security_group_id

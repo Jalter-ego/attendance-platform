@@ -1,0 +1,6 @@
+name: attendance-tenant
+runtime:
+  name: nodejs
+  options:
+    typescript: false
+description: Three isolated Attendance EC2 instances per tenant, on the shared base VPC.

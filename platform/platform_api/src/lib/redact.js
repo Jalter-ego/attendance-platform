@@ -18,7 +18,7 @@ export function redact(value, secrets = []) {
     .replace(/\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b/g, '[REDACTED]')
     .replace(/(X-Amz-(?:Signature|Credential|Security-Token)=)[^&\s]+/gi, '$1[REDACTED]')
     .replace(
-      /([\w.-]*(?:password|passwd|secret|token|access[_-]?key|private[_-]?key|authorization)[\w.-]*["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi,
+      /([\w.-]*(?:password|passwd|passphrase|secret|token|access[_-]?key|private[_-]?key|authorization)[\w.-]*["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')

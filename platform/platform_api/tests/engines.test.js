@@ -331,19 +331,20 @@ test(
   }),
 );
 
-test('Pulumi todavía no está conectado; CloudFormation sí', () => {
+test('los cuatro motores tienen adaptadores reales registrados', () => {
   assert.equal(engineAvailable('terraform'), true);
   assert.equal(engineAvailable('tofu'), true);
   assert.equal(engineAvailable('cloudformation'), true);
-  assert.equal(engineAvailable('pulumi'), false);
-  assert.throws(() => getAdapter('pulumi', config), OperationError);
+  assert.equal(engineAvailable('pulumi'), true);
+  assert.equal(getAdapter('pulumi', config).engine, 'pulumi');
   assert.equal(getAdapter('cloudformation', config).engine, 'cloudformation');
 });
 
 test('assertCanEnqueue valida motor, estado y confirmación de eliminación', () => {
   assert.doesNotThrow(() => assertCanEnqueue(tenant, 'create'));
   assert.doesNotThrow(() => assertCanEnqueue(tenant, 'diagnostic'));
-  assert.throws(() => assertCanEnqueue({ ...tenant, engine: 'pulumi' }, 'create'), {
+  assert.doesNotThrow(() => assertCanEnqueue({ ...tenant, engine: 'pulumi' }, 'create'));
+  assert.throws(() => assertCanEnqueue({ ...tenant, engine: 'unknown' }, 'create'), {
     code: 'ENGINE_NOT_AVAILABLE',
   });
   assert.throws(() => assertCanEnqueue(tenant, 'suspend'), { code: 'INVALID_TENANT_STATE' });

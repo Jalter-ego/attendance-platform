@@ -203,6 +203,7 @@ export function createCloudFormationAdapter(config) {
   });
 
   async function getStack(ctx, cfn, name) {
+    ctx.signal?.throwIfAborted();
     try {
       const { Stacks } = await cfn.send(new DescribeStacksCommand({ StackName: name }), {
         abortSignal: ctx.signal,

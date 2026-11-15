@@ -1,0 +1,5 @@
+node_modules/
+Pulumi.*.yaml
+tenant-input.json
+current.pulumi-plan.json
+.dependencies.sha256

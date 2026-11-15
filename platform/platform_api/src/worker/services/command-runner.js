@@ -12,7 +12,7 @@ export class CommandError extends OperationError {
   }
 }
 
-const sensitiveName = /password|passwd|secret|token|access[_-]?key|private[_-]?key|database_url/i;
+const sensitiveName = /password|passwd|passphrase|secret|token|access[_-]?key|private[_-]?key|database_url/i;
 
 // Mantener las credenciales AWS del operador; quitar las de la aplicación.
 function commandEnv(extra) {

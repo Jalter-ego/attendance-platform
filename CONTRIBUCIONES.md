@@ -12,7 +12,7 @@ Los commits y PRs llevan el autor real.
 | P3 | jorge (GitHub `Gatu-1548`) | **Packer · cloud-init · Respaldos** | Respaldos | P4 |
 | P4 | _por completar_ | Ansible · app del tenant · planes | _por completar_ | P3 |
 | P5 | _por completar_ | Observabilidad · escáneres de seguridad | Inicio, Monitoreo, Seguridad | P6 |
-| P6 | _por completar_ | Plataforma: API · worker · auditoría | _por completar_ | P5 |
+| P6 | Sebastián (GitHub `Sebastian-M-C`) | Plataforma: API · worker · auditoría | Login, shell, Tenants, progreso y logs; integración del panel | P5 |
 
 ---
 
@@ -118,4 +118,32 @@ Errores encontrados y corregidos en las pruebas reales: inventario de Ansible ma
 
 ## P5 — _por completar_
 
-## P6 — _por completar_
+## P6 — Sebastián: plataforma local y aprovisionamiento integrado
+
+**Tareas del plan:** H1–H11, J4 y sección individual J8. Integra los módulos del equipo; no atribuye a P6 la autoría original de la red, los motores de P2, las AMIs, los respaldos, la app ni el monitoreo.
+
+### Qué integro y defiendo
+
+- Registro y encolado atómicos, permisos de plataforma/tenant, consultas e historial.
+- Worker separado, reclamación transaccional con `SKIP LOCKED`, una operación activa por tenant, heartbeat, cancelación y recuperación de trabajos interrumpidos.
+- Ejecutor compartido de comandos con timeout, filtrado de secretos y eventos consultables desde el panel.
+- Configuración congelada por despliegue y reintento vinculado al intento anterior para conservar identidad, AMIs y estado.
+- Ciclo de vida conectado a los componentes del equipo, vistas previas y auditoría de actor, fecha y resultado.
+- Ampliación de la integración con un programa/adaptador Pulumi que crea tres EC2, conserva su estado en S3 y permite suspender/reanudar sin borrar el EBS de PostgreSQL.
+- Arranque reproducible del panel/API/worker en Windows con PostgreSQL dedicado y credenciales locales fuera de Git.
+
+### Archivos principales
+
+`platform/platform_api/src/modules/operations/operations.service.js`, `src/modules/deployments/deployment-config.js`, `src/worker/queue.js`, `src/worker/handlers/create.handler.js`, `src/worker/services/command-runner.js`, `src/lib/redact.js`, `src/modules/audit/audit.service.js`, `src/engines/pulumi.js`, `src/worker/services/pulumi-lifecycle.js` e `infra/pulumi/tenant/`.
+
+Manual y arranque: `platform/DEMO-P6.md`, `platform/LOCAL.md` y `platform/scripts/start-local.ps1`. El manual conserva como base las secciones de los responsables del equipo.
+
+### PR y verificación
+
+- [PR #27](https://github.com/Jalter-ego/attendance-platform/pull/27): integración anterior de P6 con PR #26, fusionada en master.
+- En la ampliación local: suite API sin AWS, integración con PostgreSQL dedicado y dobles, lint/build del panel, SDK Pulumi con mocks y CLI Pulumi real con backend local y un componente sin recursos AWS.
+- Prueba AWS voluntaria: `platform/platform_api/tests/aws.e2e.js`, que registra operaciones, comprueba salud y conserva un marcador PostgreSQL durante suspensión/reanudación. Los resultados reales se guardan en `.local/aws-evidence/`; una prueba local con dobles no se presenta como una validación AWS.
+
+### Qué muestro en el video
+
+Crear desde el asistente con el motor elegido, seguir el trabajo en el detalle, mostrar inventario/URLs/versiones, explicar el reintento sobre el mismo estado y enseñar la auditoría. En código, centrar la defensa en la transacción de registro, la cola y el ejecutor, en coordinación con los responsables de los otros módulos.

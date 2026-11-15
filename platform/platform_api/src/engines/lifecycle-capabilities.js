@@ -3,4 +3,4 @@ export const supportsTerraformLifecycle = (engine) => engine === 'terraform' || 
 const cloudFormationOperations = new Set(['create', 'suspend', 'resume', 'preview-delete', 'delete']);
 
 export const supportsRealLifecycle = (engine, type = 'create') =>
-  supportsTerraformLifecycle(engine) || (engine === 'cloudformation' && cloudFormationOperations.has(type));
+  supportsTerraformLifecycle(engine) || (['cloudformation', 'pulumi'].includes(engine) && cloudFormationOperations.has(type));
