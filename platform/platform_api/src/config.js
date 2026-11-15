@@ -29,6 +29,7 @@ const schema = z.object({
   DB_SSL_CA_FILE: z.string().trim().default(''),
   SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(8),
   COOKIE_SECURE: boolean.optional(),
+  LOG_REQUESTS: boolean.optional(),
   WORKER_POLL_MS: z.coerce.number().int().min(100).max(30000).default(1000),
   WORKER_STALE_MS: z.coerce.number().int().min(30000).default(60000),
   BACKUP_BASH: z.string().trim().default(defaultBash),
