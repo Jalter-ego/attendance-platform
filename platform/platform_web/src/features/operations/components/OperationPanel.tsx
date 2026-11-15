@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { operationsService } from '../services/operations.service';
 import { operationLabels } from '../types';
 import type { Operation, OperationEvent } from '../types';
@@ -21,6 +21,7 @@ export function OperationPanel({
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [revision, setRevision] = useState(0);
+  const logConsoleRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const controller = new AbortController();
     let cursor = '0';
@@ -64,6 +65,12 @@ export function OperationPanel({
     };
   }, [id, revision]);
   const operation = view?.id === id ? view.operation : null;
+  const lastEventId = view?.id === id ? view.events[view.events.length - 1]?.id : undefined;
+  useEffect(() => {
+    const logConsole = logConsoleRef.current;
+    if (logConsole) logConsole.scrollTop = logConsole.scrollHeight;
+  }, [id, lastEventId]);
+
   async function action(kind: 'cancel' | 'retry') {
     setPending(true);
     setError('');
@@ -111,6 +118,7 @@ export function OperationPanel({
             max={100}
           />
           <div
+            ref={logConsoleRef}
             className="log-console"
             role="log"
             aria-label="Eventos de la operación"
