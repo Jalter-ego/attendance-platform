@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { rateLimit } from 'express-rate-limit';
 import { errorHandler, HttpError } from './lib/errors.js';
+import { requestLog } from './lib/request-log.js';
 import {
   login,
   requireSession,
@@ -38,6 +39,7 @@ import { resolve } from 'node:path';
 export function createApp({ pool, config, adapters = config.PLATFORM_DEPLOY_MODE === 'integration' ? createEngineAdapters(config) : {} }) {
   const app = express();
   app.disable('x-powered-by');
+  if (config.LOG_REQUESTS ?? !process.env.NODE_TEST_CONTEXT) app.use(requestLog());
   app.use(helmet(config.PLATFORM_DEPLOY_MODE === 'local' ? {
     contentSecurityPolicy: { directives: { upgradeInsecureRequests: null } },
   } : {}));
