@@ -25,6 +25,9 @@ const paths = {
   check: ['m5 12 4 4L19 6'],
   archive: ['M3 4h18v5H3z', 'M5 9v11h14V9', 'M10 13h4'],
   layers: ['m12 3 9 5-9 5-9-5z', 'm3 13 9 5 9-5'],
+  chevronRight: ['m9 5 7 7-7 7'],
+  close: ['m6 6 12 12', 'M18 6 6 18'],
+  history: ['M3 4v5h5', 'M3.5 9a9 9 0 1 1 .4 7', 'M12 7v5l3 2'],
 } as const;
 
 export function Icon({

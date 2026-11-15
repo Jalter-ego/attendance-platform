@@ -10,6 +10,10 @@ texto, fondos y líneas de esta pantalla se definen en las variables `--landing-
 Los ejemplos de instituciones son ilustrativos y el acceso dirige al login o al
 panel según la sesión existente.
 
+La imagen de portada es un aula vacía sin personas, guardada como
+`src/features/landing/empty-classroom.webp`. Su prompt y origen están en
+`src/features/landing/empty-classroom.prompt.md`.
+
 La tipografía base es **VTEX Trust**, copiada de Attendance y cargada desde
 `src/assets/fonts/VTEXTrust` mediante `src/styles/fonts.css`. La familia se
 configura con `--font-sans` en `src/index.css`.
@@ -22,6 +26,20 @@ fondo y decoración se definen en las variables `--login-*`.
 
 El formulario conserva las validaciones y la autenticación con cookie de sesión,
 muestra los errores de acceso y permite mostrar u ocultar la contraseña.
+
+## Diseño del panel principal
+
+El menú y la cabecera del panel comparten los colores `--panel-*`, definidos en
+`src/components/PlatformLayout.css`. El sidebar usa un verde profundo derivado de
+`--primary`, con las variables `--sidebar-*` para sus textos y estados.
+Conservan `--primary` y VTEX Trust; el fondo
+incorpora formas de marca discretas y la navegación se adapta a pantallas pequeñas.
+
+El directorio (`/tenants`) tiene estilos propios en
+`src/features/tenants/pages/tenants.css`. Conserva los filtros en la URL, el catálogo
+de planes, la paginación y la actualización automática cada cinco segundos.
+El contador refleja los resultados de la consulta, incluidos los filtros activos.
+Las acciones y secciones del menú siguen dependiendo del rol de la sesión.
 
 ## Desarrollo local
 

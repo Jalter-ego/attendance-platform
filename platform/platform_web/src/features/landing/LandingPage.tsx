@@ -4,7 +4,7 @@ import { Icon } from '../../components/Icon';
 import { useResource } from '../../hooks/useResource';
 import { useAuth } from '../auth/hooks/useAuth';
 import { tenantsService } from '../tenants/services/tenants.service';
-import classroom from './classroom.webp';
+import classroom from './empty-classroom.webp';
 import './landing.css';
 
 const roles = [
@@ -82,7 +82,7 @@ export function LandingPage() {
           <figure className="landing-photograph">
             <div className="landing-photo-frame">
               <span className="landing-photo-orbit" aria-hidden="true" />
-              <img src={classroom} alt="Docente con una tableta junto a estudiantes en un aula." width={1200} height={800} fetchPriority="high" />
+              <img src={classroom} alt="Aula vacía con escritorios de madera, una pizarra verde y luz natural." width={1536} height={1024} fetchPriority="high" />
             </div>
             <figcaption>Control de asistencia para instituciones educativas.</figcaption>
           </figure>

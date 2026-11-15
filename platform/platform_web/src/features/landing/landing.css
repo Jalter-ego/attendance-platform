@@ -74,7 +74,7 @@
 .landing-photograph { min-width: 0; margin: 0; }
 .landing-photo-frame { position: relative; isolation: isolate; padding: 0 18px 18px 0; }
 .landing-photo-frame::before { position: absolute; z-index: -1; inset: 28px 0 0 28px; border-radius: 5px; background: var(--landing-accent-soft); content: ''; }
-.landing-photo-frame img { display: block; width: 100%; height: auto; aspect-ratio: 1.16; border-radius: 5px; object-fit: cover; object-position: 62% center; }
+.landing-photo-frame img { display: block; width: 100%; height: auto; aspect-ratio: 1.16; border-radius: 5px; object-fit: cover; object-position: center; }
 .landing-photo-orbit { position: absolute; z-index: -1; top: -28px; right: -28px; width: 150px; height: 150px; border: 1px solid var(--landing-accent-line); border-radius: 50%; }
 .landing-photograph figcaption { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--landing-body); font-size: 11px; line-height: 1.6; }
 .landing-photograph figcaption::before { width: 24px; height: 1px; flex-shrink: 0; background: var(--primary); content: ''; }
@@ -142,7 +142,7 @@
   .landing-hero h1 { font-size: clamp(42px, 6.5vw, 60px); }
   .platform-landing .landing-introduction { max-width: 510px; margin-block: 22px 26px; }
   .landing-photo-frame { padding-right: 16px; }
-  .landing-photo-frame img { aspect-ratio: 1.65; object-position: center 42%; }
+  .landing-photo-frame img { aspect-ratio: 1.65; }
   .landing-photo-orbit { top: -20px; right: -14px; }
   .landing-section-grid { grid-template-columns: minmax(0, 1fr); gap: 36px; }
   .landing-platform { padding-block: 48px; }
@@ -169,7 +169,7 @@
   .landing-hero-actions { flex-direction: column; align-items: stretch; gap: 8px; }
   .landing-secondary { justify-content: center; }
   .platform-landing .landing-access-note { margin-top: 10px; font-size: 11px; text-align: center; }
-  .landing-photo-frame img { aspect-ratio: 1.2; object-position: 60% center; }
+  .landing-photo-frame img { aspect-ratio: 1.2; }
   .landing-photograph figcaption { font-size: 10px; }
   .landing-photo-orbit { right: -10px; width: 100px; height: 100px; }
   .landing-section-intro h2 { font-size: 29px; }
