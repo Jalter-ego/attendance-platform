@@ -1,0 +1,64 @@
+/* VTEX Trust: archivos locales, compartidos por toda la aplicación. */
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Hairline.otf') format('opentype');
+  font-style: normal;
+  font-weight: 100;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Thin.otf') format('opentype');
+  font-style: normal;
+  font-weight: 200;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Light.otf') format('opentype');
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Regular.otf') format('opentype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Italic.otf') format('opentype');
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Medium.otf') format('opentype');
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Bold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'VTEX Trust';
+  src: url('../assets/fonts/VTEXTrust/VTEXTrust-Black.otf') format('opentype');
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+}

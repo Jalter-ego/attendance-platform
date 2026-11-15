@@ -2,6 +2,20 @@
 
 Panel de administración en React, TypeScript y Vite sobre el diseño verde del equipo. Incluye la portada, el acceso, el asistente de instituciones, respaldos, planes, operaciones, auditoría y monitoreo.
 
+## Diseño de la portada
+
+La portada pública (`/`) se compone en `src/features/landing/LandingPage.tsx`, con
+estilos propios en `landing.css`. Conserva el verde de `--primary`; los colores de
+texto, fondos y líneas de esta pantalla se definen en las variables `--landing-*`.
+Los ejemplos de instituciones son ilustrativos y el acceso dirige al login o al
+panel según la sesión existente.
+
+La tipografía base es **VTEX Trust**, copiada de Attendance y cargada desde
+`src/assets/fonts/VTEXTrust` mediante `src/styles/fonts.css`. La familia se
+configura con `--font-sans` en `src/index.css`.
+
+## Desarrollo local
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm dev
