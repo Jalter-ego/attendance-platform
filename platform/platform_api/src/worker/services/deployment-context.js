@@ -15,7 +15,8 @@ export async function prepareDeploymentContext({ config, tenant, snapshot, opera
   const version = snapshot.input.plan_version ? ` v${snapshot.input.plan_version}` : '';
   await report(`Preparando la configuración guardada de la instalación: plan ${snapshot.input.plan}${version}.`, { stage: 'Preparando instalación', progress: 5 });
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const nativeStack = ['cloudformation', 'pulumi'].includes(snapshot.backend.type);
+  // CloudFormation y Pulumi no usan archivos de variables ni backend HCL.
+  const nativeStack = Boolean(snapshot.backend.type);
   const variableFile = nativeStack ? undefined : resolve(directory, 'tenant.tfvars.json');
   const backendFile = nativeStack ? undefined : resolve(directory, 'backend.hcl');
   const cloudInitTemplatePath = config.IAC_CLOUD_INIT_TEMPLATE ?? fileURLToPath(new URL('../../../../../infra/cloud-init/user-data.yaml.tftpl', import.meta.url));

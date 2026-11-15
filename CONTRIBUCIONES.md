@@ -10,7 +10,7 @@ Los commits y PRs llevan el autor real.
 | P1 | _por completar_ | Terraform base y módulo tenant | _por completar_ | P2 |
 | P2 | GitHub `Arlin-Ab` | **Motores IaC: EngineAdapter, Terraform/OpenTofu, Pulumi, CloudFormation** | Crear tenant (wizard), panel Infraestructura | P1 |
 | P3 | jorge (GitHub `Gatu-1548`) | **Packer · cloud-init · Respaldos** | Respaldos | P4 |
-| P4 | _por completar_ | Ansible · app del tenant · planes | _por completar_ | P3 |
+| P4 | Marcelo (GitHub `MarceloCamachh`) | **Ansible · app del tenant · planes** | Planes | P3 |
 | P5 | _por completar_ | Observabilidad · escáneres de seguridad | Inicio, Monitoreo, Seguridad | P6 |
 | P6 | Sebastián (GitHub `Sebastian-M-C`) | Plataforma: API · worker · auditoría | Login, shell, Tenants, progreso y logs; integración del panel | P5 |
 
@@ -33,6 +33,7 @@ Los commits y PRs llevan el autor real.
 | Secretos | El handler `create` llama al servicio SSM de P6 (`worker/services/tenant-secrets.js`) antes del primer apply; los eventos solo muestran nombres. |
 | **Wizard Crear tenant** (RF-03, RF-07) | `platform_web/src/features/tenants/pages/CreateTenantPage.tsx`, en `/tenants/new` y basado en el mockup del PDF:<br>• **Datos y plan:** tarjetas de plan con límites y respaldo, selector de motor, e identificador generado desde el nombre.<br>• **Configuración:** zona horaria, servidores con sus tamaños, límites y respaldo.<br>• **Revisión:** lo que se creará en AWS, con opción de crear la infraestructura al confirmar.<br>• Resumen lateral en vivo y validación por paso. Los motores sin adaptador quedan como "solo registro".<br>API: `GET /engines` y `backup` en `GET /plans`. Reemplaza al formulario de registro anterior. |
 | **D4/D5** CloudFormation | `infra/cloudformation/tenant.yaml`: el mismo stack que el módulo Terraform (3 EC2 con IMDSv2, EBS cifrado, SG por rol, IAM limitado al prefijo SSM, respaldos opcionales), un stack por tenant.<br>`src/engines/cloudformation.js` (SDK de AWS):<br>• change sets como vista previa, con bloqueo si se perdería el disco de datos;<br>• eventos del stack como logs y error tomado del primer recurso fallido;<br>• reintento que limpia `ROLLBACK_COMPLETE`;<br>• **D5:** suspender y reanudar con la API de EC2.<br>Documentado en `infra/cloudformation/README.md`. |
+| **D3** Pulumi | `infra/pulumi/tenant`: programa en JavaScript con el mismo stack (recursos, nombres, reglas, etiquetas `ManagedBy=pulumi` y precondiciones de red), disco de datos con `protect`.<br>`src/engines/pulumi.js`:<br>• un stack por tenant en `s3://<bucket>/pulumi`, con bloqueo y cifrado (`PULUMI_SECRETS_PROVIDER`);<br>• configuración por stdin;<br>• `preview --json` con bloqueo si se perdería el disco de datos, `up` y outputs;<br>• suspender y reanudar declarativos (`InstanceState`);<br>• eliminar con huella de la vista previa y `state unprotect`.<br>Integrado en el flujo de P6 (`worker/services/pulumi-lifecycle.js`). Documentado en `infra/pulumi/README.md`. |
 | **D7** Registro de versiones (RF-13) | Cada despliegue guarda en `deployments` el motor y su versión, el proveedor AWS, la versión y el commit de las AMIs, el commit de las plantillas, las AMIs, los recursos y los outputs. Se ve en el panel **Infraestructura** del detalle del tenant. |
 
 ### Cómo lo verifiqué
@@ -56,11 +57,17 @@ Los commits y PRs llevan el autor real.
 
 - CloudFormation: `cfn-lint` sin hallazgos y `pnpm test:cloudformation` (10 pruebas con AWS simulado: crear, sin cambios, bloqueo por pérdida de datos, error legible, reintento tras `ROLLBACK_COMPLETE`, suspender/reanudar por EC2, eliminar, validación de AMIs).
 
-Pendiente de probar en AWS: el ciclo integrado del panel con Terraform y OpenTofu y el adaptador de CloudFormation de P2. En la integración con P6, el asistente registra CloudFormation como borrador y en local permite simularlo. El adaptador y la plantilla se documentan en [CloudFormation](infra/cloudformation/README.md).
+- Pulumi:
+  - `pnpm --dir infra/pulumi/tenant test`: 7 pruebas con los mocks de Pulumi. Cubren los recursos y las reglas, el user data igual a la plantilla de P3, la suspensión, la ausencia de bucket de respaldos y las validaciones.
+  - `pnpm test:pulumi`: 11 pruebas del adaptador con un CLI simulado.
+  - Integración con PostgreSQL real: ciclo crear → suspender → reanudar → vista previa → eliminar desde la API.
+  - Prueba de humo con Pulumi 3.272 real y un backend `file://`: crea el stack y ejecuta el programa hasta el proveedor AWS.
+
+Pendiente de probar en AWS: el ciclo integrado del panel con Terraform y OpenTofu y los adaptadores de CloudFormation y Pulumi de P2. En la integración con P6, el asistente registra CloudFormation como borrador y en local permite simularlo. El adaptador y la plantilla se documentan en [CloudFormation](infra/cloudformation/README.md).
 
 ### Pendiente
 
-Pulumi (D3), comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1).
+Comparación técnica (D6), documento de estado por motor (A6) y diagrama (J1). El estado de CloudFormation y de Pulumi ya está descrito en sus README.
 
 ### Qué defiendo en el video
 
@@ -114,7 +121,82 @@ Errores encontrados y corregidos en las pruebas reales: inventario de Ansible ma
 3. `tenant-backup.sh` y la pantalla Respaldos: respaldar y restaurar en vivo.
 4. Infraestructura inmutable: una versión nueva de la app es una AMI nueva (0.1.0 → 0.2.2), nunca cambios a mano en las VMs.
 
-## P4 — _por completar_
+## P4 — Ansible · App del tenant · Planes (Marcelo, GitHub `MarceloCamachh`)
+
+**Tareas del plan:** E1–E7, F1–F4, J2 y la pantalla Planes. Defiendo los roles y playbooks de Ansible, la adaptación de la app, los límites del plan (RF-05) y las pruebas de aislamiento.
+
+### Qué hice
+
+| Tarea | Resultado |
+| --- | --- |
+| **E3/E4/E5** App del tenant (`attendance-core`) | **Límites del plan:** `src/plan/` lee `PLAN_MAX_STUDENTS`, `PLAN_MAX_TEACHERS` y `PLAN_MAX_COURSES`, que escribe Ansible.<br>• Responde `403` con un mensaje claro al superarlos: *"Tu plan Básico permite hasta 100 estudiantes…"*.<br>• Estudiantes: se cuentan dentro de la transacción de la importación. Docentes: usuarios activos. Cursos: módulos en borrador o activos.<br>• Un valor inválido impide arrancar la API.<br>• `GET /plan/usage` muestra el uso frente a cada límite.<br>**Métricas:** `/metrics` con `prom-client` (latencia y peticiones por ruta, 5xx, event loop, heap). Oculto por nginx (404): Prometheus lo lee directo al puerto 5000.<br>**Demo:** `/demo/error` y `/demo/slow`, solo con `TENANT_ENV=test`.<br>El nombre de la institución, la zona horaria y el admin inicial ya venían por variables y se verificaron. |
+| **E1** Roles Ansible | Los roles `boot_*` son de P3. Mi parte en ellos:<br>• `boot_backend` traduce `limits` a `PLAN_MAX_*`;<br>• desde el PR #17 espera `GET /core/api/v1/health` = 200 (la API **conectada a su base**) en lugar de 200/401/404 en la raíz. Entra con la próxima AMI.<br>README de `infra/ansible`. |
+| **E2** Actualizar la app sin recrear las EC2 (RF-15) | **Playbook:** `infra/ansible/update.yml` con los roles `update_backend` y `update_frontend`. **Viaja dentro del paquete**, no en la AMI, así que funciona en las VMs ya creadas.<br>• Migra **antes** de cambiar nada.<br>• Cambia el enlace de forma atómica (`backend-current` o `/var/www/attendance`).<br>• Comprueba la salud y, **si falla, vuelve a la release anterior**.<br>• Conserva las 3 últimas releases.<br>**Scripts** en `infra/app-update/`:<br>• `build-release.sh` arma el paquete (código y `node_modules` compilados, `manifest.json`, `.sha256`), porque la VM no tiene Internet;<br>• `tenant-update.sh publish/apply/status` lo sube a S3 y lo instala por SSM Run Command;<br>• `remote-apply.sh` corre en la VM: candado, verificación del sha256 y Ansible.<br>Contrato con el worker: `docs/contrato-actualizacion.md`. |
+| **E6** Health check de despliegue | `infra/health/tenant-health.sh`:<br>• comprueba `/healthz` y `/core/api/v1/health` a través del nginx público (nginx → API → PostgreSQL), con reintentos;<br>• con `--boot` lee el `boot.json` de las 3 VMs por SSM;<br>• devuelve JSON con un `reason` legible (502 API caída, 503 base caída). |
+| **E7** Pruebas de aislamiento | `tests/isolation.sh` cubre las pruebas 1–5 del §9, cada una con un **control positivo**:<br>• SG entre backend y base;<br>• credenciales y `JWT_SECRET` distintos;<br>• el token de A da 401 en B;<br>• IAM: SSM solo con su prefijo, el frontend sin secretos y S3 de releases;<br>• un dato de A no aparece en B.<br>Ningún secreto viaja ni se muestra. `tests/isolation-sim/` lo reproduce con dos tenants en Docker. |
+| **F1/F3** Modelo y semilla de planes | Migración `004_plans.sql`:<br>• agrega respaldo, descripción y **versión** a `plans`;<br>• restricciones `CHECK` con las mismas reglas que el módulo de P1;<br>• `tenants.plan_snapshot`, una **copia del plan** que llena un trigger al registrar el tenant.<br>Los motores despliegan esa copia (`tenant-input.js` y `deployment-config.js`). |
+| **F2** API de planes (RF-04) | `platform_api/src/modules/plans/`: `GET/POST /plans` y `GET/PUT/DELETE /plans/:code`, con validación zod y mensajes por campo.<br>• Editar crea una versión nueva y **no toca los tenants existentes**, porque cambiar sus límites recrearía sus EC2 (`user_data_replace_on_change`).<br>• `409` si otro editó antes, o si el plan está en uso al eliminarlo. |
+| **F4** Pantalla **Planes** | `platform_web/src/features/plans/`:<br>• tarjetas con límites, servidores, disco y respaldo, versión y uso ("2 en versión anterior");<br>• editor con validación en vivo y aviso de qué instituciones **no** cambian, con confirmación obligatoria;<br>• crear y eliminar.<br>El wizard de P2 muestra los planes nuevos. |
+| **J2** Catálogo | `docs/catalogo-planes.md`: catálogo, qué cuenta cada límite en la app, recorrido catálogo → VM, reglas y política de versiones. `limits` y `backup` en `docs/examples/tenant.example.json`. |
+| **J4** Manual (mi sección) | `docs/manual/p4-planes-actualizacion.md`: planes (crear, editar con versiones, aplicar la versión nueva, eliminar), límites que ve la institución, actualizar la app desde **Actualizar**, salud y aislamiento, y problemas frecuentes. |
+
+### PRs
+
+| Repo | PR | Contenido |
+| --- | --- | --- |
+| attendance-core | [#6](https://github.com/Jalter-ego/attendance-core/pull/6) | Límites del plan, `/plan/usage`, `/metrics`, endpoints demo, 57 pruebas y colección Postman |
+| attendance-platform | [#14](https://github.com/Jalter-ego/attendance-platform/pull/14) | `update.yml` y roles `update_*` (E2) con pruebas en Docker |
+| | [#15](https://github.com/Jalter-ego/attendance-platform/pull/15) | `build-release.sh`, `tenant-update.sh`, `remote-apply.sh`, `tenant-health.sh` y prueba de punta a punta |
+| | [#17](https://github.com/Jalter-ego/attendance-platform/pull/17) | `boot_backend` espera `/health`; README de `infra/ansible` |
+| | [#22](https://github.com/Jalter-ego/attendance-platform/pull/22) · [#23](https://github.com/Jalter-ego/attendance-platform/pull/23) | Migración 004 y API de planes (#23 corrige el `package.json` roto por el merge) |
+| | [#24](https://github.com/Jalter-ego/attendance-platform/pull/24) | Pantalla Planes |
+| | [#25](https://github.com/Jalter-ego/attendance-platform/pull/25) | Arreglos para Windows encontrados por P3 en AWS: `AWS_CLI_OUTPUT_ENCODING` y `boot.json` en varias líneas |
+| | [#26](https://github.com/Jalter-ego/attendance-platform/pull/26) | Catálogo de planes (J2) y `tenant.example.json` |
+| | [#28](https://github.com/Jalter-ego/attendance-platform/pull/28) | `tests/isolation.sh`, simulación en Docker y sección Planes del README |
+
+### Cómo lo verifiqué
+
+- **App:** 57 pruebas unitarias (`pnpm test` en `attendance-core`) y un recorrido contra un PostgreSQL real:
+  - los `403` de docentes, cursos y estudiantes, incluido contar en otros módulos;
+  - modo sin límites, `/plan/usage`, `/metrics` y `/demo/*` en `test` y en `prod`.
+- **Actualización y salud, en Docker** (`infra/ansible/tests/update/`): `run.sh` 10/10 y `e2e.sh` 22/22.
+  - Usan los paquetes **reales** de core y web, PostgreSQL y migraciones reales.
+  - Cubren la vuelta atrás, la misma VM y los mismos datos, y los casos de API o base caída.
+  - La AWS CLI se simula y responde con `\r\n`, como la de Windows del worker.
+- **En AWS, por P3** con `prueba-p3/test`:
+  - backend `ecf3f46d0e9f` → `6ac1f4697347` con la **misma EC2** (`i-0409175e2fc14e60d`) y los datos intactos;
+  - un paquete roto quedó en `rolled_back` y la app siguió sana;
+  - `tenant-health.sh` respondió `healthy` en 49 s, con las 3 VMs `ready`.
+- **Planes:** 8 pruebas de API contra PostgreSQL real (`pnpm test:plans`), incluida "**editar un plan no cambia la entrada del motor de un tenant existente**". La suite completa del API pasa (71). La pantalla se recorrió en Chrome: edición a v3 con aviso, validación y creación.
+- **Aislamiento:** `tests/isolation-sim/run.sh` 7/7 con dos tenants en redes Docker separadas.
+  - Con los tenants aislados pasan las 20 comprobaciones.
+  - Con una **fuga provocada** (red abierta y `JWT_SECRET` repetido), el script la **detecta**.
+  - Ningún secreto aparece en la salida.
+- `shellcheck` sin avisos en todos los scripts, `ansible-playbook --syntax-check`, y `pnpm lint` y `pnpm build` del frontend.
+
+Errores encontrados y corregidos:
+- `/demo/slow?ms=abc` esperaba en vez de responder 400, porque el `ValidationPipe` global convertía el texto en `NaN`.
+- Las rutas 404 quedaban etiquetadas como `*path` en las métricas.
+- Un `CHECK` de PostgreSQL dejaba pasar claves ausentes, porque acepta `NULL`.
+- Editar un plan habría recreado las EC2 de sus tenants en el siguiente suspend o resume. Lo resolví con la copia del plan.
+- El merge del PR #22 rompió `package.json`.
+- La AWS CLI de Windows perdía el JSON por la codificación, y `boot.json` estaba en varias líneas (los encontró P3 en AWS).
+
+### Pendiente
+
+- Correr `tests/isolation.sh` en AWS con dos tenants y guardar el log como evidencia de J5.
+- Que P3 incluya en la próxima AMI (0.2.3) el cambio de `boot_backend`, con `--exclude=tests/`.
+
+### Qué defiendo en el video
+
+1. **Ansible en dos momentos:**
+   - `boot_backend` configura la app con los secretos y los `PLAN_MAX_*` de su tenant;
+   - `update.yml` actualiza sin recrear la VM: migra, cambia el enlace de forma atómica, comprueba la salud y vuelve atrás si falla.
+
+   Es complementario a la AMI inmutable de P3: la AMI cambia el sistema; el paquete versionado cambia la app con trazabilidad y vuelta atrás.
+2. **Límites del plan (RF-05):** cómo cuenta la app estudiantes, docentes y cursos, y el `403` en vivo con `/plan/usage`.
+3. **Planes con versiones (RF-04):** por qué editar un plan no toca los tenants existentes (la copia del plan evita recrear sus EC2), y la pantalla Planes.
+4. **Aislamiento:** las 5 pruebas con su control positivo, la fuga provocada que el script detecta y la segunda barrera del core (el token se valida contra **su** base).
 
 ## P5 — _por completar_
 

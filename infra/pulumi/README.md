@@ -1,113 +1,76 @@
-# Pulumi: tenants reales desde el worker local
+# Instalación por tenant con Pulumi — P2, D3
 
-`tenant/` es un programa Node.js de Pulumi AWS Classic. Crea exactamente tres EC2
-(`frontend`, `backend`, `db`) en la base compartida, tres SG, perfiles/roles IAM,
-un volumen EBS gp3 cifrado independiente para PostgreSQL, su attachment y tres
-recursos `InstanceState`. No crea otra VPC, NAT ni bucket. Requiere las AMIs de
-Packer con `attendance-boot` y la base exportada de P1.
+`tenant/` es un programa Pulumi en **JavaScript** (el mismo lenguaje del backend) que crea el **mismo stack** que [`infra/terraform/tenant`](../terraform/tenant/README.md) y [`infra/cloudformation/tenant.yaml`](../cloudformation/README.md). Lo usan los tenants registrados con `engine=pulumi`, y la plataforma lo ejecuta con el adaptador `platform/platform_api/src/engines/pulumi.js`.
 
-## Configuración
+| Archivo | Contenido |
+| --- | --- |
+| `tenant/tenant.js` | Recursos, validaciones de entrada y precondiciones de red (equivalentes a `variables.tf` y `locals.tf`). |
+| `tenant/cloud-init.js` | User data equivalente a `infra/cloud-init/user-data.yaml.tftpl`: Pulumi no interpreta plantillas HCL. |
+| `tenant/index.js` | Lee la entrada del tenant desde la configuración del stack (`attendance-tenant:input`) y exporta los outputs. |
+| `tenant/test/` | Pruebas con los mocks de Pulumi: construyen el grafo de recursos sin AWS. |
 
-```dotenv
-PULUMI_BIN=pulumi
-IAC_PULUMI_DIR=/ruta/attendance-platform/infra/pulumi/tenant
-IAC_STATE_BUCKET=attendance-state-<cuenta>
-PULUMI_BACKEND_URL=s3://attendance-state-<cuenta>/pulumi
-PULUMI_CONFIG_PASSPHRASE=<valor-local-aleatorio-y-persistente>
-AWS_PROFILE=default
+## Qué crea (un stack por tenant y entorno)
+
+Stack: `organization/attendance-tenant/<tenant_id>-<env>`, por ejemplo `organization/attendance-tenant/san-marcos-test`.
+
+| Recurso | Detalle |
+| --- | --- |
+| 3 EC2 | Frontend (subred pública con IP pública), backend y base de datos (subred privada), desde las AMIs de Packer. IMDSv2 obligatorio, disco raíz gp3 cifrado de 12 GiB y `userDataReplaceOnChange`. |
+| EBS de datos | gp3 cifrado del tamaño del plan, adjuntado en `/dev/sdf`, con la etiqueta `BackupPolicy` de DLM si hay bucket de respaldos. Lleva **`protect: true`**: un `pulumi up` no puede eliminarlo ni reemplazarlo. |
+| 3 grupos de seguridad y 19 reglas | Las mismas que `security.tf`: HTTP 80 al frontend, API 5000 solo desde el frontend y el monitoreo, PostgreSQL 5432 solo desde el backend, exporters solo desde el SG de monitoreo. |
+| IAM | Un rol y un perfil por servidor, con los mismos nombres que Terraform. Backend y db leen solo `/tenants/<id>/<env>/*` en SSM; el frontend no lee secretos. Con bucket de respaldos se agregan el agente SSM, `releases/` y `db/`. |
+| Estado de las EC2 | `aws.ec2transitgateway.InstanceState` (el `aws_ec2_instance_state` de Terraform) con `running` o `stopped`. |
+
+El proveedor aplica las etiquetas `Project`, `Tenant`, `Env`, `Plan` y `ManagedBy=pulumi` a todos los recursos. Cada recurso lleva además `Role`. El programa también comprueba, igual que las precondiciones de Terraform:
+
+- que las subredes y el SG de monitoreo pertenecen a la VPC compartida;
+- que la base de datos está en la misma AZ que su disco;
+- que el endpoint SSM está disponible y tiene DNS privado;
+- que cada AMI es propia, x86_64 y tiene la etiqueta `Role` correcta.
+
+## Cómo lo ejecuta la plataforma
+
+Directorio de ejecución por tenant: `.local/runs/<tenant>/<env>/pulumi/`, con un `Pulumi.yaml` generado (`main` apunta a `infra/pulumi/tenant`) y el `Pulumi.<stack>.yaml` del stack. El repositorio no recibe archivos de ningún tenant.
+
+| Operación | Qué hace el adaptador |
+| --- | --- |
+| `create` | `stack select --create`, `config set` (la entrada llega **por stdin**, no en los argumentos), `preview --json`. Si el preview eliminaría o reemplazaría el disco de datos, se detiene; si no hay cambios, no ejecuta `up`. Después `up --skip-preview` y `stack output --json`. |
+| `suspend` / `resume` | **Declarativo**: el mismo `up` con `suspended=true/false` cambia los `InstanceState` y vuelve a leer la IP pública del frontend. No hace falta llamar a la API de EC2 aparte, como en CloudFormation (D5). |
+| vista previa de eliminación | `stack export` (capturado en privado) lista los recursos y calcula una huella SHA-256. |
+| `delete` | Rechaza la operación si la huella no coincide con la vista previa confirmada. Después `state unprotect --all` (solo aquí se libera el disco) y `destroy`. |
+
+Cancelar desde la plataforma espera a que termine el `up` o el `destroy` en curso, para no dejar el estado a medias. Perder la operación o apagar el worker sí lo detiene, con 60 s de gracia. Los errores se traducen a mensajes comprensibles: bloqueo del stack, frase de cifrado, credenciales, cuota de vCPU, AMIs y disco protegido.
+
+## Estado y su protección (A6)
+
+- **Dónde:** backend DIY de Pulumi en el bucket de estado de P1, `s3://<IAC_STATE_BUCKET>/pulumi/`, separado de las claves `tenants/` de Terraform. El bucket ya tiene versionado, cifrado SSE, bloqueo de acceso público y una política que exige TLS. Con `PULUMI_BACKEND_URL` se puede usar otro backend (por ejemplo `file://` para pruebas locales).
+- **Aislamiento:** un stack por tenant y entorno. Cada `up`, `destroy` o `unprotect` toma el **bloqueo del stack** en el backend. Además, la cola de la plataforma no permite dos operaciones del mismo tenant.
+- **Cifrado de secretos del stack:** `PULUMI_SECRETS_PROVIDER` (por defecto `passphrase`, con `PULUMI_CONFIG_PASSPHRASE` en el `.env` del worker; para producción se recomienda `awskms://alias/<clave>?region=...`). La configuración del tenant no contiene secretos: las contraseñas viven en SSM (`/tenants/<id>/<env>/`) y nunca pasan por Pulumi. La frase se pasa solo por variable de entorno y se redacta en los logs.
+- **Protección de datos:** `protect: true` en el EBS de PostgreSQL, el bloqueo previo del adaptador y la confirmación por huella antes de eliminar.
+
+## Permisos del worker
+
+Los mismos que el módulo Terraform: EC2 (instancias, volúmenes, SG y sus reglas, `Describe*`, `StopInstances` y `StartInstances`), IAM (roles, políticas en línea, perfiles e `iam:PassRole`), `sts:GetCallerIdentity`, más lectura y escritura en `s3://<bucket>/pulumi/*`. Con KMS se suman `kms:Encrypt` y `kms:Decrypt` sobre la clave del proveedor de secretos.
+
+## Instalar y probar
+
+```bash
+pnpm --dir infra/pulumi/tenant install        # @pulumi/pulumi y @pulumi/aws (fijados)
+pnpm --dir infra/pulumi/tenant test           # 7 pruebas con mocks de Pulumi, sin AWS
+cd platform/platform_api && pnpm test:pulumi  # 11 pruebas del adaptador con un CLI simulado
 ```
 
-`IAC_PULUMI_DIR` es opcional; se resuelve desde el módulo del adaptador. El backend
-por defecto es `s3://<IAC_STATE_BUCKET>/pulumi`. El bucket debe existir previamente;
-Pulumi administra checkpoints, historial y bloqueos allí. El perfil del operador
-debe poder leer/escribir ese prefijo y administrar los recursos del tenant.
-No se guarda el perfil ni ninguna clave AWS en el programa o sus entradas.
+La primera ejecución real descarga el plugin del proveedor AWS de Pulumi, que ocupa unos cientos de MB.
 
-La passphrase se obtiene únicamente del entorno/configuración local del worker;
-no se incluye en argumentos, archivos de entrada ni checkpoints. Conservarla entre
-reinicios. No es la contraseña PostgreSQL. Es posible usar `file:///ruta/estado`
-como backend de pruebas. La passphrase es obligatoria también allí.
+Uso manual opcional, sin la plataforma. Requiere los outputs de la base y que los secretos de SSM ya existan:
 
-El worker copia `Pulumi.yaml`, `index.js`, `package.json` y `package-lock.json` a
-su directorio privado por tenant. Instala exactamente el lock con `npm ci
---ignore-scripts` cuando cambia su hash. El CLI instala el plugin AWS que el
-programa requiere. Node.js debe incluir npm; `NPM_CLI_JS` permite indicar otra
-ruta absoluta al script `npm-cli.js` en instalaciones no estándar.
-
-## Identidad y contrato de integración
-
-Stack: `<base.project_name>-<tenant_id>-<env>`. El backend fijado en el snapshot es:
-
-```json
-{"type":"pulumi","region":"us-east-2","bucket":"attendance-state-123","url":"s3://attendance-state-123/pulumi","stack_name":"attendance-demo-test"}
+```bash
+cd infra/pulumi/tenant
+export PULUMI_CONFIG_PASSPHRASE=...           # o --secrets-provider awskms://...
+pulumi login s3://<IAC_STATE_BUCKET>/pulumi?region=us-east-2
+pulumi stack init organization/attendance-tenant/prueba-test
+pulumi config set attendance-tenant:input "$(cat entrada-del-tenant.json)"
+pulumi preview
 ```
 
-El adaptador exporta `createPulumiAdapter(config)` en
-`platform/platform_api/src/engines/pulumi.js`. Implementa `preflight`, `versions`,
-`preview`, `apply`, `outputs`, `suspend`, `resume`, `destroy` con el contrato común
-`EngineResult`. Los outputs permitidos son `urls`, `instance_ids`, `private_ips`,
-`db_volume_id`, `ssm_prefix`, `suspended` y `stack_name`.
-
-`runPulumiLifecycle` en `worker/services/pulumi-lifecycle.js` integra create,
-suspend, resume, preview-delete y delete. Devuelve `{tenantStatus,deployment,result}`.
-Fija la entrada original en disco y conserva AMIs, plan, red y backend en reintentos
-y cambios de energía. Cambios de plan y upgrades se rechazan hasta integrar un
-flujo que actualice también los límites de la aplicación.
-
-La vista previa de eliminación devuelve `stack_name`, `fingerprint`, `lines`,
-`totals` y `data_volumes_deleted`; el resultado presentado al usuario lleva
-`changes`, `downtime`, `stack_name` y `fingerprint`. `destroy(ctx,{expectedPreview})`
-exige que el hash SHA256 del checkpoint y el backend sigan coincidiendo.
-
-## Protección de datos y cancelación
-
-Los secretos de aplicación viven en SSM y los lee `attendance-boot` en EC2.
-Pulumi recibe el prefijo, nunca los valores. El frontend no puede leer parámetros;
-backend y DB tienen permisos solamente sobre su tenant/entorno. Las descargas de
-releases y dumps S3 también se restringen por prefijo. No se usa
-`AmazonSSMManagedInstanceCore`, que permitiría leer parámetros ajenos.
-
-Preview utiliza JSON privado y `--save-plan`; `up` consume exactamente ese archivo
-con `--plan`. Toda eliminación/reemplazo de un volumen EBS bloquea apply, suspend
-y resume. Solo destroy con vista previa vigente puede eliminar el disco.
-El plan temporal se elimina incluso al fallar. Los inputs no incluyen contraseñas.
-Los stdout de preview, export y output se capturan sin registrarlos y los outputs
-retornados usan una lista permitida. Los comandos mutadores suprimen outputs;
-el ejecutor compartido redacta los logs.
-
-Una cancelación de usuario espera el final de `up`/`destroy` y después marca la
-operación cancelada; una pérdida de lease, apagado del worker o timeout sí termina
-el proceso. Nunca se ejecuta `pulumi cancel` ni se elimina un bloqueo ajeno
-automáticamente. Tras una terminación forzada se debe revisar el stack antes de
-reintentar; conservar los checkpoints y bloqueos del backend.
-
-Suspender cambia `InstanceState` a `stopped`: no elimina EC2 ni EBS. Reanudar cambia
-a `running`. La IP pública se consulta después de completar el cambio de energía.
-IMDSv2 es obligatorio, los root disks están cifrados y no existe SSH entrante.
-Las únicas entradas públicas son HTTP/80 del frontend. El servicio base debe
-proporcionar la salida y los endpoints necesarios para SSM/S3.
-
-## Validación local sin AWS
-
-Desde `platform/platform_api`:
-
-```sh
-node --test tests/pulumi.test.js
-```
-
-Las pruebas utilizan un doble del ejecutor y verifican orden preview/up, uso del
-plan revisado, aislamiento, JSON privado, protección del disco, fingerprint de
-eliminación, suspensión, cancelación y contrato del ciclo de vida. No crean AWS.
-
-Desde `infra/pulumi/tenant`, después de `npm ci --ignore-scripts`, `npm test`
-ejecuta además el programa con mocks del SDK real y una prueba del CLI instalado
-con backend local y un solo ComponentResource. Esta última se omite si Pulumi no
-está instalado. No invoca proveedores AWS ni requiere credenciales.
-
-Referencias oficiales consultadas:
-
-- [Pulumi preview y planes guardados](https://www.pulumi.com/docs/iac/cli/commands/pulumi_preview/)
-- [Pulumi up](https://www.pulumi.com/docs/iac/cli/commands/pulumi_up/)
-- [Pulumi destroy](https://www.pulumi.com/docs/iac/cli/commands/pulumi_destroy/)
-- [Selección y creación de stacks](https://www.pulumi.com/docs/iac/cli/commands/pulumi_stack_select/)
-- [AWS EC2 Instance](https://www.pulumi.com/registry/packages/aws/api-docs/ec2/instance/)
+Elimina los recursos al terminar las pruebas: `pulumi state unprotect --all --yes && pulumi destroy`. Esto también borra el disco de datos.

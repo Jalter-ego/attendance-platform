@@ -1,192 +1,367 @@
-// Pulumi CLI driver: isolated workspace, DIY S3 backend, saved plan, no secret input.
+// Adaptador Pulumi (D3, P2). Ejecuta el programa infra/pulumi/tenant (JavaScript, el mismo
+// lenguaje del backend) con un stack por tenant y entorno en el backend S3 compartido:
+//   s3://<IAC_STATE_BUCKET>/pulumi  →  organization/attendance-tenant/<tenant_id>-<env>
+//
+// Cada tenant tiene su directorio de ejecución (IAC_RUNS_DIR/<tenant>/<env>/pulumi) con un
+// Pulumi.yaml generado (main → el programa del repo) y su Pulumi.<stack>.yaml (sal del
+// cifrado y configuración). Así no se escriben archivos del tenant dentro del repositorio.
+//
+// Los procesos usan el ejecutor común de P6 (argumentos separados, logs filtrados, timeout y
+// cancelación del árbol). La entrada del tenant llega por stdin a `pulumi config set`.
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { runCommand } from '../worker/services/command-runner.js';
 import { OperationCancelled, OperationError } from '../worker/errors.js';
+import { explainEngineError } from './errors.js';
 import { engineResult } from './result.js';
 import { imageVersions, templatesCommit } from './versions.js';
 
-const DEFAULT_MODULE = fileURLToPath(new URL('../../../../infra/pulumi/tenant/', import.meta.url));
-const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const managed = resource => resource.custom && !resource.type?.startsWith('pulumi:providers:');
-export function pulumiStackName(input) { return `${input.base.project_name}-${input.tenant_id}-${input.env}`; }
+export const PROJECT = 'attendance-tenant';
+const LABEL = 'Pulumi';
+// Errores de la CLI: la salida en modo --json devuelve código 255 con los diagnósticos.
+const JSON_EXIT_CODES = [0, 1, 255];
+const VOLUME = 'aws:ebs/volume:Volume';
+const REPLACING = new Set(['replace', 'create-replacement', 'delete-replaced']);
+const OP_LABELS = { create: 'Se creará', update: 'Se modificará', delete: 'Se eliminará', replace: 'Se reemplazará' };
 
-export function summarizePulumiPreview(raw) {
-  if (!raw || !Array.isArray(raw.steps))
-    throw new OperationError('ENGINE_OUTPUT', 'Pulumi no devolvió una vista previa JSON reconocida.');
+export const stackName = (input) => `${input.tenant_id}-${input.env}`;
+export const qualifiedStack = (input) => `organization/${PROJECT}/${stackName(input)}`;
+
+/** Backend DIY de Pulumi: prefijo propio `pulumi/` en el bucket de estado de P1. */
+export function backendUrl(config, input) {
+  if (config.PULUMI_BACKEND_URL) return config.PULUMI_BACKEND_URL;
+  const bucket = config.PLATFORM_STATE_BUCKET || config.IAC_STATE_BUCKET;
+  return bucket ? `s3://${bucket}/pulumi?region=${config.PLATFORM_STATE_REGION || input.base.region}` : null;
+}
+
+/** Entrada del programa (la misma de Terraform). Sin secretos: viven en SSM. */
+export function programInput(input) {
+  const { image, ...rest } = input;
+  return { ...rest, engine: 'pulumi' };
+}
+
+// urn:pulumi:<stack>::<project>::<type>::<name>
+const urnParts = (urn) => {
+  const parts = String(urn).split('::');
+  return { type: parts[2]?.split('$').at(-1) ?? '', name: parts[3] ?? '' };
+};
+const managed = (type) => type && !type.startsWith('pulumi:');
+
+/** Resume `pulumi preview --json`: conteos, líneas legibles y si se perdería el disco de datos. */
+export function summarizePreview(preview) {
+  const byUrn = new Map();
+  for (const step of preview?.steps ?? []) {
+    const { type, name } = urnParts(step.urn);
+    if (!managed(type) || ['same', 'read', 'refresh', 'discard'].includes(step.op)) continue;
+    const op = REPLACING.has(step.op) ? 'replace' : step.op;
+    if (!OP_LABELS[op]) continue;
+    const previous = byUrn.get(step.urn);
+    if (!previous || op === 'replace') byUrn.set(step.urn, { op, type, name });
+  }
+  const changes = [...byUrn.values()];
   const totals = { create: 0, update: 0, delete: 0, replace: 0 };
-  const deleted = [];
-  const lines = [];
-  for (const step of raw.steps) {
-    const type = step.type ?? step.newState?.type ?? step.oldState?.type;
-    const urn = step.urn ?? step.newState?.urn ?? step.oldState?.urn;
-    if (!type || typeof urn !== 'string' || typeof step.op !== 'string')
-      throw new OperationError('ENGINE_OUTPUT', 'Pulumi devolvió un paso de plan incompleto.');
-    if (type.startsWith('pulumi:')) continue;
-    const op = step.op;
-    if (op === 'create') totals.create++;
-    else if (op === 'update') totals.update++;
-    else if (op === 'delete') totals.delete++;
-    else if (op === 'replace') totals.replace++;
-    // Includes the detailed replacement step variants; fail closed for EBS replacement.
-    if (type === 'aws:ebs/volume:Volume' && /delete|replace/.test(op)) deleted.push(urn);
-    if (!['same', 'read', 'read-replacement'].includes(op)) lines.push(`${op}: ${urn.split('::').at(-1)} (${type})`);
-  }
-  return { totals, lines, data_volumes_deleted: [...new Set(deleted)], warnings: [] };
+  for (const { op } of changes) totals[op] += 1;
+  return {
+    totals,
+    lines: changes.map(({ op, type, name }) => `${OP_LABELS[op]}: ${type.split(':').at(-1)} ${name}`),
+    data_volumes_deleted: changes
+      .filter(({ op, type }) => type === VOLUME && (op === 'delete' || op === 'replace'))
+      .map(({ name }) => name),
+  };
 }
 
-// Deliberately allowlist exported fields; never expose arbitrary stack outputs.
-export function pulumiOutputs(raw) {
-  if (!raw || typeof raw !== 'object' || !raw.instance_ids || !raw.db_volume_id)
-    throw new OperationError('ENGINE_OUTPUT', 'El stack Pulumi no tiene los outputs del tenant.');
-  return Object.fromEntries(['urls', 'instance_ids', 'private_ips', 'db_volume_id', 'ssm_prefix', 'suspended']
-    .map(key => [key, raw[key]]));
+/** Recursos administrados de `pulumi stack export` y su huella (para confirmar la eliminación). */
+export function stackInventory(exported) {
+  const resources = (exported?.deployment?.resources ?? [])
+    .map((resource) => ({ ...urnParts(resource.urn), urn: resource.urn, id: resource.id ?? null }))
+    .filter(({ type }) => managed(type));
+  const fingerprint = createHash('sha256')
+    .update(resources.map(({ urn, id }) => `${urn}=${id}`).sort().join('\n'))
+    .digest('hex');
+  return { resources, fingerprint };
 }
 
-export function createPulumiAdapter(config, { commandRunner = runCommand } = {}) {
-  const moduleDir = config.IAC_PULUMI_DIR || DEFAULT_MODULE;
-  const bin = config.PULUMI_BIN || 'pulumi';
-  const js = /\.m?js$/i.test(bin);
-  function paths(ctx) {
-    for (const value of [ctx.input.tenant_id, ctx.input.env])
-      if (!/^[a-zA-Z0-9_-]+$/.test(value ?? '')) throw new OperationError('IAC_INPUT', 'Identidad de tenant Pulumi inválida.');
-    const stack = ctx.backend?.stack_name ?? pulumiStackName(ctx.input);
-    if (!/^[a-zA-Z0-9_.-]+$/.test(stack)) throw new OperationError('IAC_INPUT', 'Nombre de stack Pulumi inválido.');
-    const workspace = resolve(ctx.directory ?? join(config.IAC_RUNS_DIR, ctx.input.tenant_id, ctx.input.env, 'pulumi'));
-    const backend = ctx.backend?.url ?? config.PULUMI_BACKEND_URL ??
-      ((ctx.backend?.bucket ?? config.IAC_STATE_BUCKET) ? `s3://${ctx.backend?.bucket ?? config.IAC_STATE_BUCKET}/pulumi` : null);
-    if (!backend || !/^(s3|file):\/\//.test(backend))
-      throw new OperationError('IAC_CONFIG', 'Configura IAC_STATE_BUCKET o PULUMI_BACKEND_URL (s3:// o file://).');
-    return { workspace, stack, backend, input: join(workspace, 'tenant-input.json'),
-      plan: join(workspace, 'current.pulumi-plan.json') };
+/** Mensaje comprensible desde la salida de Pulumi ("error: ..." en minúsculas). */
+export function explainPulumiError(lines) {
+  const text = lines.join('\n');
+  if (/stack is currently locked|currently locked by/i.test(text))
+    return 'Otra ejecución tiene bloqueado el stack Pulumi de este tenant. Espera a que termine; si se interrumpió, un responsable debe revisar el bloqueo (pulumi cancel / stack export) antes de reintentar.';
+  if (/passphrase|PULUMI_CONFIG_PASSPHRASE|failed to decrypt/i.test(text))
+    return 'No se pudo abrir el cifrado del stack Pulumi. Revisa PULUMI_CONFIG_PASSPHRASE o PULUMI_SECRETS_PROVIDER del worker.';
+  if (/marked for protection|resource .* is protected|protected resource/i.test(text))
+    return 'El cambio eliminaría o reemplazaría el disco de datos protegido de PostgreSQL. Se detuvo sin perder datos.';
+  if (/Cannot find module|ERR_MODULE_NOT_FOUND/i.test(text))
+    return 'Faltan las dependencias del programa Pulumi. Ejecuta: pnpm --dir infra/pulumi/tenant install.';
+  return explainEngineError(lines.map((line) => line.replace(/^\s*error:\s+/i, 'Error: ')), LABEL);
+}
+
+// Un script .js/.mjs (CLI simulado de las pruebas) se ejecuta con el mismo Node.
+function resolveCommand(bin) {
+  return /\.m?js$/i.test(bin) ? { command: process.execPath, prefix: [bin] } : { command: bin, prefix: [] };
+}
+
+async function exists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
   }
-  function env(ctx, p) {
+}
+
+export function createPulumiAdapter(config) {
+  const { command, prefix } = resolveCommand(config.PULUMI_BIN || 'pulumi');
+  const timeoutMs = (config.IAC_TIMEOUT_S ?? 3600) * 1000;
+  const programDir = config.IAC_PULUMI_DIR;
+  const provider = config.PULUMI_SECRETS_PROVIDER || 'passphrase';
+  const passphrase = provider === 'passphrase' ? config.PULUMI_CONFIG_PASSPHRASE ?? '' : undefined;
+
+  function env(input) {
     return {
-      PULUMI_BACKEND_URL: p.backend, PULUMI_SKIP_UPDATE_CHECK: 'true', PULUMI_SKIP_CONFIRMATIONS: 'true',
-      PULUMI_ENABLE_STREAMING_JSON_PREVIEW: 'false', PULUMI_CONFIG: '{}',
-      PULUMI_CONFIG_PASSPHRASE: config.PULUMI_CONFIG_PASSPHRASE ?? process.env.PULUMI_CONFIG_PASSPHRASE,
-      ATTENDANCE_PULUMI_INPUT: p.input, AWS_REGION: ctx.input.base.region, AWS_DEFAULT_REGION: ctx.input.base.region,
-      ...(config.AWS_PROFILE ? { AWS_PROFILE: config.AWS_PROFILE } : {}),
+      PULUMI_SKIP_UPDATE_CHECK: 'true',
+      AWS_REGION: input.base.region,
+      ...(passphrase === undefined ? {} : { PULUMI_CONFIG_PASSPHRASE: passphrase }),
     };
   }
-  async function cli(ctx, p, args, { capture = false, mutation = false } = {}) {
+
+  async function prepare(ctx) {
+    const { input } = ctx;
+    const url = ctx.backend?.url ?? backendUrl(config, input);
+    if (!url)
+      throw new OperationError('IAC_CONFIG', 'Configura IAC_STATE_BUCKET (o PULUMI_BACKEND_URL) para guardar el estado de Pulumi.');
+    if (provider === 'passphrase' && !passphrase)
+      throw new OperationError('IAC_CONFIG', 'Configura PULUMI_CONFIG_PASSPHRASE (o PULUMI_SECRETS_PROVIDER=awskms://...) en el .env del worker.');
+    if (!(await exists(join(programDir, 'index.js'))))
+      throw new OperationError('IAC_CONFIG', 'No se encontró el programa Pulumi. Revisa IAC_PULUMI_DIR.');
+    if (!(await exists(join(programDir, 'node_modules', '@pulumi', 'aws'))))
+      throw new OperationError('IAC_CONFIG', 'Faltan las dependencias del programa Pulumi. Ejecuta: pnpm --dir infra/pulumi/tenant install.');
+    const dir = ctx.directory ?? join(config.IAC_RUNS_DIR, input.tenant_id, input.env, 'pulumi');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    // JSON es YAML válido. `main` permite ejecutar el programa del repo desde este directorio.
+    const project = {
+      name: PROJECT,
+      runtime: { name: 'nodejs' },
+      main: programDir.replaceAll('\\', '/'),
+      backend: { url },
+    };
+    await writeFile(join(dir, 'Pulumi.yaml'), `${JSON.stringify(project, null, 2)}\n`, { mode: 0o600 });
+    return { dir, url, stack: qualifiedStack(input) };
+  }
+
+  /** Ejecuta la CLI. stdout de comandos --json se captura en privado y nunca se registra. */
+  async function cli(ctx, p, args, { capture = false, input, signal = ctx.signal, onLine, killGraceMs, acceptedExitCodes } = {}) {
+    const tail = [];
+    const report = onLine ?? ((line, stream) => ctx.report(line, { level: stream === 'stderr' ? 'warning' : 'info' }));
+    try {
+      return await runCommand({
+        command,
+        args: [...prefix, ...args, '--non-interactive', '--color', 'never'],
+        cwd: p.dir,
+        env: env(ctx.input),
+        input,
+        signal,
+        timeoutMs,
+        killGraceMs,
+        acceptedExitCodes,
+        captureStdout: capture,
+        logStdout: !capture,
+        secrets: passphrase ? [passphrase] : [],
+        onLine: async (line, stream) => {
+          tail.push(line);
+          if (tail.length > 80) tail.shift();
+          await report(line, stream);
+        },
+      });
+    } catch (error) {
+      if (error.code === 'COMMAND_FAILED') throw new OperationError('ENGINE_FAILED', explainPulumiError(tail));
+      if (error.code === 'COMMAND_NOT_FOUND')
+        throw new OperationError(error.code, 'No se encontró Pulumi. Instálalo o configura PULUMI_BIN.');
+      throw error;
+    }
+  }
+
+  function parseJson(result, what) {
+    try {
+      return JSON.parse(result.stdout || 'null');
+    } catch {
+      throw new OperationError('ENGINE_OUTPUT', `Pulumi devolvió ${what} que no es JSON.`);
+    }
+  }
+
+  async function selectStack(ctx, p, { create = true } = {}) {
+    await ctx.report(`Pulumi: stack ${stackName(ctx.input)} en el backend compartido.`, { stage: 'Inicializando Pulumi', progress: 15 });
+    await cli(ctx, p, ['stack', 'select', p.stack, ...(create ? ['--create', '--secrets-provider', provider] : [])]);
+  }
+
+  async function configure(ctx, p) {
+    // Por stdin: la configuración no aparece en los argumentos del proceso.
+    await cli(ctx, p, ['config', 'set', `${PROJECT}:input`, '--stack', p.stack], {
+      input: JSON.stringify(programInput(ctx.input)),
+    });
+  }
+
+  async function preview(ctx, p) {
+    await ctx.report('Calculando los cambios del tenant (pulumi preview).', { stage: 'Planificando cambios', progress: 30 });
+    const result = await cli(ctx, p, ['preview', '--json', '--stack', p.stack], {
+      capture: true, acceptedExitCodes: JSON_EXIT_CODES,
+    });
+    const data = parseJson(result, 'una vista previa');
+    if (result.exitCode !== 0) {
+      const messages = (data?.diagnostics ?? [])
+        .filter(({ severity }) => severity === 'error')
+        .map(({ message }) => `error: ${String(message).trim()}`);
+      throw new OperationError('ENGINE_FAILED', explainPulumiError(messages.length ? messages : ['error: la vista previa falló']));
+    }
+    return summarizePreview(data);
+  }
+
+  async function exportStack(ctx, p) {
+    const result = await cli(ctx, p, ['stack', 'export', '--stack', p.stack], { capture: true });
+    return stackInventory(parseJson(result, 'un estado'));
+  }
+
+  // Igual que Terraform: cancelar desde la UI espera al final del `up`/`destroy` para no
+  // dejar el estado a medias; perder la operación o apagar el worker sí lo detiene.
+  async function guarded(ctx, p, args) {
+    ctx.signal?.throwIfAborted();
     const controller = new AbortController();
     let cancelled = false;
     const forward = () => {
-      if (mutation && ctx.signal.reason instanceof OperationCancelled) cancelled = true;
+      if (ctx.signal.reason instanceof OperationCancelled) cancelled = true;
       else controller.abort(ctx.signal.reason);
     };
-    ctx.signal?.throwIfAborted();
     ctx.signal?.addEventListener('abort', forward, { once: true });
     try {
-      const result = await commandRunner({ command: js ? process.execPath : bin,
-        args: [...(js ? [bin] : []), ...args, '--non-interactive', '--color', 'never'], cwd: p.workspace,
-        env: env(ctx, p), signal: controller.signal, timeoutMs: (config.IAC_TIMEOUT_S ?? 3600) * 1000,
-        killGraceMs: mutation ? 60000 : 5000, captureStdout: capture, logStdout: !capture,
+      await cli(ctx, p, args, {
+        signal: controller.signal,
+        killGraceMs: 60000,
         onLine: async (line, stream) => {
           if (cancelled) return;
-          try { await ctx.report(line, { level: stream === 'stderr' ? 'warning' : 'info' }); }
-          catch (error) { if (mutation && error instanceof OperationCancelled) cancelled = true; else throw error; }
+          try {
+            await ctx.report(line, { level: stream === 'stderr' ? 'warning' : 'info' });
+          } catch (error) {
+            if (error instanceof OperationCancelled) cancelled = true;
+            else throw error;
+          }
         },
       });
-      if (cancelled) throw new OperationCancelled();
-      return result;
-    } catch (error) {
-      if (error.code === 'COMMAND_FAILED') throw new OperationError('ENGINE_FAILED', 'Pulumi falló. Revisa los eventos filtrados de la operación y el bloqueo del stack antes de reintentar.');
-      if (error.code === 'COMMAND_NOT_FOUND') throw new OperationError('COMMAND_NOT_FOUND', 'No se encontró Pulumi. Instálalo o configura PULUMI_BIN.');
-      throw error;
-    } finally { ctx.signal?.removeEventListener('abort', forward); }
-  }
-  function json(text) {
-    try { return JSON.parse(text); }
-    catch { throw new OperationError('ENGINE_OUTPUT', 'Pulumi devolvió JSON inválido.'); }
-  }
-  async function prepare(ctx, { install = true } = {}) {
-    const p = paths(ctx);
-    if (!(config.PULUMI_CONFIG_PASSPHRASE ?? process.env.PULUMI_CONFIG_PASSPHRASE))
-      throw new OperationError('IAC_CONFIG', 'Configura PULUMI_CONFIG_PASSPHRASE en el entorno local del worker; no se guarda en el estado.');
-    await mkdir(p.workspace, { recursive: true, mode: 0o700 });
-    for (const name of ['Pulumi.yaml', 'package.json', 'package-lock.json', 'index.js']) {
-      try { await copyFile(join(moduleDir, name), join(p.workspace, name)); }
-      catch { throw new OperationError('IAC_CONFIG', 'No se encontró el proyecto Pulumi completo. Revisa IAC_PULUMI_DIR.'); }
+    } finally {
+      ctx.signal?.removeEventListener('abort', forward);
     }
-    // Avoid accidental propagation of future secret-bearing properties from callers.
-    const input = Object.fromEntries(['tenant_id', 'env', 'name', 'plan', 'contact_email', 'timezone', 'sizing',
-      'limits', 'backup', 'ami', 'base', 'suspended'].map(key => [key, ctx.input[key]]));
-    await writeFile(p.input, JSON.stringify(input), { mode: 0o600 });
-    if (install) {
-      // The installed lock digest prevents stale provider dependencies after upgrades.
-      const stamp = join(p.workspace, '.dependencies.sha256');
-      const wanted = digest(await readFile(join(moduleDir, 'package-lock.json'), 'utf8'));
-      let current; try { current = await readFile(stamp, 'utf8'); } catch { /* first install */ }
-      if (current !== wanted) {
-        await commandRunner({ command: process.execPath, args: [config.NPM_CLI_JS || join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-          'ci', '--ignore-scripts', '--no-audit', '--no-fund'], cwd: p.workspace, env: env(ctx, p), signal: ctx.signal,
-          timeoutMs: (config.IAC_TIMEOUT_S ?? 3600) * 1000, onLine: line => ctx.report(line) });
-        await writeFile(stamp, wanted);
-      }
-    }
-    return p;
+    if (cancelled) throw new OperationCancelled();
   }
-  async function select(ctx, p, { create = false } = {}) {
-    // --create is atomic and only creates stack metadata, never AWS resources.
-    await cli(ctx, p, ['stack', 'select', p.stack, ...(create ? ['--create', '--secrets-provider', 'passphrase'] : [])]);
+
+  async function readOutputs(ctx, p) {
+    const result = await cli(ctx, p, ['stack', 'output', '--json', '--stack', p.stack], { capture: true });
+    return parseJson(result, 'outputs') ?? {};
   }
+
   async function versions(ctx, p) {
-    const version = await cli(ctx, p, ['version'], { capture: true });
-    const pkg = json(await readFile(join(moduleDir, 'package.json'), 'utf8'));
-    return { engine: 'pulumi', pulumi: version.stdout.trim(), provider_aws: pkg.dependencies['@pulumi/aws'],
-      templates_commit: await templatesCommit(moduleDir), module: 'infra/pulumi/tenant', ...imageVersions(ctx.input) };
-  }
-  async function preview(ctx, p) {
-    await rm(p.plan, { force: true });
-    const output = await cli(ctx, p, ['preview', '--stack', p.stack, '--json', '--save-plan', p.plan], { capture: true });
-    return summarizePulumiPreview(json(output.stdout));
-  }
-  async function destruction(ctx, p) {
-    const output = await cli(ctx, p, ['stack', 'export', '--stack', p.stack], { capture: true });
-    const state = json(output.stdout);
-    if (!Array.isArray(state.deployment?.resources)) throw new OperationError('ENGINE_OUTPUT', 'Estado Pulumi incompleto.');
-    const resources = state.deployment.resources;
-    const selected = resources.filter(managed);
-    return { stack_name: p.stack, fingerprint: digest({ stack: p.stack, backend: p.backend, resources }),
-      totals: { create: 0, update: 0, delete: selected.length, replace: 0 },
-      lines: selected.map(item => `delete: ${item.urn.split('::').at(-1)} (${item.type})`),
-      data_volumes_deleted: selected.filter(item => item.type === 'aws:ebs/volume:Volume').map(item => item.urn), warnings: [] };
-  }
-  async function outputs(ctx, p) {
-    const output = await cli(ctx, p, ['stack', 'output', '--stack', p.stack, '--json'], { capture: true });
-    return { ...pulumiOutputs(json(output.stdout)), stack_name: p.stack };
-  }
-  async function run(ctx, { destroy = false, expectedPreview } = {}) {
-    const p = await prepare(ctx);
+    const toolVersions = { engine: 'pulumi' };
     try {
-      await select(ctx, p, { create: !destroy });
-      const toolVersions = await versions(ctx, p);
-      const summary = destroy ? await destruction(ctx, p) : await preview(ctx, p);
-      if (destroy && (!expectedPreview || expectedPreview.stack_name !== p.stack || expectedPreview.fingerprint !== summary.fingerprint))
-        throw new OperationError('IAC_PREVIEW_CHANGED', 'Genera otra vista previa: el estado o identidad Pulumi cambió antes de eliminar.');
-      if (!destroy && summary.data_volumes_deleted.length)
-        throw new OperationError('DATA_LOSS_BLOCKED', 'El plan Pulumi eliminaría o reemplazaría el disco PostgreSQL. Se detuvo sin aplicar cambios.');
-      for (const line of summary.lines) await ctx.report(line);
-      await ctx.report(destroy ? 'Eliminando recursos del tenant.' : 'Aplicando el plan Pulumi revisado.', { stage: 'Aplicando cambios', progress: 50 });
-      await cli(ctx, p, destroy ? ['destroy', '--stack', p.stack, '--yes', '--skip-preview', '--suppress-outputs']
-        : ['up', '--stack', p.stack, '--yes', '--skip-preview', '--plan', p.plan, '--suppress-outputs'], { mutation: true });
-      const result = destroy ? {} : await outputs(ctx, p);
-      return { ...engineResult({ outputs: result, toolVersions, logRef: ctx.logRef }), preview: summary };
-    } finally { await rm(p.plan, { force: true }); }
+      const result = await cli(ctx, p, ['version'], { capture: true });
+      toolVersions.pulumi = result.stdout.trim().split(/\s+/)[0] || null;
+    } catch (error) {
+      if (error.code === 'COMMAND_CANCELLED' || ctx.signal?.aborted) throw error;
+      toolVersions.pulumi = null;
+    }
+    try {
+      const pkg = JSON.parse(await readFile(join(programDir, 'node_modules', '@pulumi', 'aws', 'package.json'), 'utf8'));
+      toolVersions.provider_aws = pkg.version ?? null;
+    } catch {
+      toolVersions.provider_aws = null;
+    }
+    toolVersions.templates_commit = await templatesCommit(programDir, ['.']);
+    Object.assign(toolVersions, imageVersions(ctx.input));
+    toolVersions.module = 'infra/pulumi/tenant';
+    return toolVersions;
   }
-  return { engine: 'pulumi', label: 'Pulumi',
-    async preflight(ctx) { const p = await prepare(ctx, { install: false }); await cli(ctx, p, ['version'], { capture: true }); },
-    async versions(ctx) { const p = await prepare(ctx, { install: false }); return versions(ctx, p); },
-    async preview(ctx, { destroy = false } = {}) { const p = await prepare(ctx); try {
-      await select(ctx, p, { create: !destroy }); return destroy ? await destruction(ctx, p) : await preview(ctx, p);
-    } finally { await rm(p.plan, { force: true }); } },
-    apply: ctx => run(ctx), suspend: ctx => run({ ...ctx, input: { ...ctx.input, suspended: true } }),
-    resume: ctx => run({ ...ctx, input: { ...ctx.input, suspended: false } }),
-    destroy: (ctx, options) => run(ctx, { ...options, destroy: true }),
-    async outputs(ctx) { const p = await prepare(ctx, { install: false }); await select(ctx, p); return outputs(ctx, p); },
+
+  // preparar → stack → configuración → preview → (bloqueo de pérdida de datos) → up → outputs.
+  async function run(ctx) {
+    await ctx.report('Motor Pulumi. Directorio de ejecución del tenant listo.', { stage: 'Preparando el directorio del tenant', progress: 10 });
+    const p = await prepare(ctx);
+    await selectStack(ctx, p);
+    const toolVersions = await versions(ctx, p);
+    await configure(ctx, p);
+    const summary = await preview(ctx, p);
+    if (summary.data_volumes_deleted.length)
+      throw new OperationError('DATA_LOSS_BLOCKED',
+        'El cambio eliminaría o reemplazaría el disco de datos de PostgreSQL y esta operación no es una eliminación. Se detuvo sin aplicar cambios.');
+    const { totals } = summary;
+    await ctx.report(`Plan: crear ${totals.create}, modificar ${totals.update}, reemplazar ${totals.replace}, eliminar ${totals.delete}.`, { stage: 'Plan revisado', progress: 45 });
+    if (Object.values(totals).every((count) => count === 0)) {
+      await ctx.report('Sin cambios: la infraestructura ya coincide con lo solicitado.', { stage: 'Sin cambios pendientes', progress: 75 });
+    } else {
+      await ctx.report('Aplicando los cambios (pulumi up). Una cancelación se atiende al terminar este paso.', { stage: 'Aplicando cambios', progress: 50 });
+      await guarded(ctx, p, ['up', '--yes', '--skip-preview', '--suppress-progress', '--stack', p.stack]);
+    }
+    const outputs = await readOutputs(ctx, p);
+    await ctx.report('Outputs del despliegue leídos.', { stage: 'Infraestructura aplicada', progress: 80 });
+    return {
+      ...engineResult({ outputs: { ...outputs, stack_name: p.stack }, toolVersions, logRef: ctx.logRef }),
+      preview: summary,
+    };
+  }
+
+  async function previewDestroy(ctx, p) {
+    try {
+      await selectStack(ctx, p, { create: false });
+    } catch (error) {
+      if (error.code === 'ENGINE_FAILED') return { stack: null, lines: [], resources: [], fingerprint: stackInventory(null).fingerprint };
+      throw error;
+    }
+    const inventory = await exportStack(ctx, p);
+    return {
+      stack: p.stack,
+      lines: inventory.resources.map(({ type, name }) => `Se eliminará: ${type.split(':').at(-1)} ${name}${type === VOLUME ? ' (disco de datos de PostgreSQL)' : ''}`),
+      resources: inventory.resources.map(({ type, name, id }) => ({ type, name, id })),
+      fingerprint: inventory.fingerprint,
+    };
+  }
+
+  return {
+    engine: 'pulumi',
+    label: LABEL,
+    async preflight(ctx) {
+      const p = await prepare(ctx);
+      // `pulumi version` no abre el backend ni habla con AWS: detecta la CLI antes de SSM.
+      await cli(ctx, p, ['version'], { capture: true });
+    },
+    async versions(ctx) {
+      const p = await prepare(ctx);
+      return versions(ctx, p);
+    },
+    async preview(ctx, { destroy = false } = {}) {
+      const p = await prepare(ctx);
+      if (destroy) return previewDestroy(ctx, p);
+      await selectStack(ctx, p);
+      await configure(ctx, p);
+      return preview(ctx, p);
+    },
+    apply: (ctx) => run(ctx),
+    suspend: (ctx) => run({ ...ctx, input: { ...ctx.input, suspended: true } }),
+    resume: (ctx) => run({ ...ctx, input: { ...ctx.input, suspended: false } }),
+    async destroy(ctx, { expectedPreview } = {}) {
+      const p = await prepare(ctx);
+      const current = await previewDestroy(ctx, p);
+      if (expectedPreview && expectedPreview.fingerprint !== current.fingerprint)
+        throw new OperationError('IAC_PREVIEW_STALE', 'Los recursos del stack cambiaron desde la vista previa. Genera una nueva antes de eliminar.');
+      const toolVersions = await versions(ctx, p);
+      if (current.stack && current.resources.length) {
+        await ctx.report(`Eliminando ${current.resources.length} recursos del stack ${stackName(ctx.input)}, incluido el disco de datos.`, { stage: 'Eliminando recursos', progress: 50 });
+        // El disco está protegido contra updates; la eliminación confirmada lo libera.
+        await cli(ctx, p, ['state', 'unprotect', '--all', '--yes', '--stack', p.stack]);
+        await guarded(ctx, p, ['destroy', '--yes', '--skip-preview', '--suppress-progress', '--stack', p.stack]);
+      }
+      await ctx.report('Recursos del tenant eliminados.', { stage: 'Recursos eliminados', progress: 80 });
+      return engineResult({ outputs: { stack_name: current.stack }, toolVersions, logRef: ctx.logRef });
+    },
+    async outputs(ctx) {
+      const p = await prepare(ctx);
+      await selectStack(ctx, p, { create: false });
+      return readOutputs(ctx, p);
+    },
   };
 }

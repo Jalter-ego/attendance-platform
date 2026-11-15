@@ -37,8 +37,7 @@ export async function runCreateOperation({
   const versions = applied.tool_versions ?? await adapter.versions(context);
   const deployment = publicDeployment(outputs, versions, snapshot);
   if (snapshot.backend.type === 'pulumi') {
-    deployment.outputs.state = { engine: 'pulumi', bucket: snapshot.backend.bucket,
-      url: snapshot.backend.url, stack_name: snapshot.backend.stack_name };
+    deployment.outputs.state = { tenant: tenant.id, engine: tenant.engine, backend: snapshot.backend.url, stack: snapshot.backend.stack };
   } else if (snapshot.backend.type !== 'cloudformation') {
     const { bucket, region, key } = snapshot.backend;
     deployment.outputs.state = { tenant: tenant.id, engine: tenant.engine, bucket, region, key };

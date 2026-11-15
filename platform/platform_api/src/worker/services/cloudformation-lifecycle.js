@@ -11,8 +11,9 @@ import { checkTenantHealth } from './tenant-health.js';
 
 const status = { create: 'ready', resume: 'ready', suspend: 'suspended', delete: 'deleted' };
 
-async function pinDeploymentInput(config, tenant, input) {
-  const location = resolve(config.PLATFORM_WORK_ROOT || config.IAC_RUNS_DIR, 'cloudformation', tenant.id, 'initial-input.json');
+// También lo usa Pulumi (pulumi-lifecycle.js): la ruta incluye el motor del tenant.
+export async function pinDeploymentInput(config, tenant, input) {
+  const location = resolve(config.PLATFORM_WORK_ROOT || config.IAC_RUNS_DIR, tenant.engine, tenant.id, 'initial-input.json');
   await mkdir(dirname(location), { recursive: true, mode: 0o700 });
   const binding = { project: input.base.project_name, region: input.region, vpc: input.base.vpc_id };
   const pinned = { binding, ami: input.ami, image: input.image };
@@ -26,12 +27,12 @@ async function pinDeploymentInput(config, tenant, input) {
     const initial = JSON.parse(await readFile(location, 'utf8'));
     if (Object.entries(binding).every(([key, value]) => initial.binding[key] === value)) return initial;
   } catch {
-    throw new OperationError('IAC_CONFIG', 'La configuración fijada de CloudFormation no se puede leer.');
+    throw new OperationError('IAC_CONFIG', 'La configuración fijada del stack no se puede leer.');
   }
   throw new OperationError('IAC_STACK_CHANGED', 'Cambió la red o identidad del stack. Revisa la configuración persistida del tenant.');
 }
 
-function healthUrls(urls) {
+export function healthUrls(urls) {
   const paths = { frontend: '/healthz', backend: '/core/api/v1/health' };
   const targets = {};
   let origin;
