@@ -108,7 +108,7 @@ role=$(jq -r .vm_role /etc/attendance/tenant.json 2>/dev/null)
 case "$role" in
   backend) link=/opt/attendance/backend-current; image_key=backend_commit ;;
   frontend) link=/var/www/attendance; image_key=frontend_commit ;;
-  *) cat /var/lib/attendance/boot.json 2>/dev/null || echo null; exit 0 ;;
+  *) jq -c . /var/lib/attendance/boot.json 2>/dev/null || echo null; exit 0 ;;
 esac
 version=$(basename "$(readlink "$link" 2>/dev/null || true)")
 version=${version#"$role-"}

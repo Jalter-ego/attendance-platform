@@ -211,7 +211,7 @@ Errores encontrados y corregidos:
 - Ejecutor compartido de comandos con timeout, filtrado de secretos y eventos consultables desde el panel.
 - Configuración congelada por despliegue y reintento vinculado al intento anterior para conservar identidad, AMIs y estado.
 - Ciclo de vida conectado a los componentes del equipo, vistas previas y auditoría de actor, fecha y resultado.
-- Ampliación de la integración con un programa/adaptador Pulumi que crea tres EC2, conserva su estado en S3 y permite suspender/reanudar sin borrar el EBS de PostgreSQL.
+- Integración con el programa/adaptador Pulumi de P2 que crea tres EC2, conserva su estado en S3 y permite suspender/reanudar sin borrar el EBS de PostgreSQL.
 - Arranque reproducible del panel/API/worker en Windows con PostgreSQL dedicado y credenciales locales fuera de Git.
 
 ### Archivos principales

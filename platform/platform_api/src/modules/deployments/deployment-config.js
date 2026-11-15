@@ -126,10 +126,6 @@ export function publicDeployment(raw, versions, snapshot, { suspended = false } 
       ssm_prefix: `/tenants/${snapshot.input.tenant_id}/${snapshot.input.env}`,
       suspended,
     };
-    if (snapshot.input.engine === 'pulumi') {
-      if (raw.stack_name !== snapshot.backend.stack_name) throw new Error('Pulumi stack identity mismatch');
-      outputs.stack_name = snapshot.backend.stack_name;
-    }
     if (snapshot.input.engine === 'cloudformation') {
       const name = snapshot.backend.stack_name;
       const arn = z.string().regex(new RegExp(`^arn:(aws|aws-us-gov|aws-cn):cloudformation:${snapshot.backend.region}:\\d{12}:stack/${name}/[a-zA-Z0-9-]+$`));
