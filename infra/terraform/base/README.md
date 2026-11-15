@@ -15,6 +15,27 @@ Prepara:
 
 La EC2 de monitoreo se habilita con `monitoring`; sin ese bloque su valor es `null` y solo se crea la infraestructura compartida anterior. La imagen de P3 ya incluye Prometheus y Grafana; P5 aporta el descubrimiento de tenants, dashboards y alertas. Las tres EC2 de cada tenant tienen otro módulo y otro estado.
 
+## Presupuesto de la cuenta — A2
+
+En el archivo local de variables se puede habilitar:
+
+```hcl
+monthly_budget = {
+  amount_usd = 10
+  email      = "responsable@example.com"
+}
+```
+
+`costs.tf` crea un presupuesto mensual de toda la cuenta, con avisos de gasto real
+al superar 80 % y 100 %. Es una alerta, no un tope de facturación. El correo es el del
+responsable AWS y se conserva en variables locales, no el de cada institución.
+El responsable lo habilitó el 15/11/2026. Los participantes deben conservar ese bloque
+en sus configuraciones de la base; volver a `null` planifica eliminar el presupuesto.
+
+Detener monitoreo no debe reemplazarlo: se conserva su asignación inicial de IP pública
+y se ignora la diferencia temporal que devuelve EC2 mientras está apagado. Su URL
+pública queda en `null` durante la parada y se actualiza tras el siguiente refresh.
+
 ## Cuenta AWS y acceso a servidores
 
 Los permisos de las cuentas del equipo ya los resolvió el responsable del proyecto con acceso administrador. Este Terraform no crea ni modifica esos usuarios.

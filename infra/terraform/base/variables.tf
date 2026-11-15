@@ -1,3 +1,20 @@
+variable "monthly_budget" {
+  description = "Presupuesto mensual de toda la cuenta AWS y correo del responsable; null no lo administra."
+  type = object({
+    amount_usd = number
+    email      = string
+  })
+  default = null
+
+  validation {
+    condition = var.monthly_budget == null ? true : (
+      var.monthly_budget.amount_usd > 0 &&
+      can(regex("^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$", var.monthly_budget.email))
+    )
+    error_message = "Indica un monto positivo en USD y el correo del responsable de AWS."
+  }
+}
+
 variable "project_name" {
   description = "Nombre del proyecto; debe coincidir con el bootstrap y los otros motores."
   type        = string

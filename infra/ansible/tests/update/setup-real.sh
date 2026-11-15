@@ -31,7 +31,7 @@ DB_WRITE_PORT=5432
 DB_WRITE_USERNAME=attendance
 DB_WRITE_PASSWORD=e2e-password-0123456789
 DB_WRITE_NAME=attendance
-JWT_SECRET=e2e-jwt-secret-0123456789-0123456789-0123456789
+JWT_SECRET=e2e-jwt-secret-0123456789-0123456789-0123456789 # gitleaks:allow -- token ficticio exclusivo de esta prueba local
 JWT_EXPIRES_IN=8h
 E
 chown root:attendance /etc/attendance/backend.env; chmod 0640 /etc/attendance/backend.env

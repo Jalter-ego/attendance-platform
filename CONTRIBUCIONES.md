@@ -7,7 +7,7 @@ Los commits y PRs llevan el autor real.
 
 | Rol | Integrante | Eje (herramienta de la materia) | Pantallas | Suplente |
 | --- | --- | --- | --- | --- |
-| P1 | _por completar_ | Terraform base y módulo tenant | _por completar_ | P2 |
+| P1 | Jhon Said Andia Merino (GitHub `Jalter-ego`) | Terraform/OpenTofu, estado, red y permisos | Integración de acciones de infraestructura y auditoría con P6 | P2 |
 | P2 | GitHub `Arlin-Ab` | **Motores IaC: EngineAdapter, Terraform/OpenTofu, Pulumi, CloudFormation** | Crear tenant (wizard), panel Infraestructura | P1 |
 | P3 | jorge (GitHub `Gatu-1548`) | **Packer · cloud-init · Respaldos** | Respaldos | P4 |
 | P4 | Marcelo (GitHub `MarceloCamachh`) | **Ansible · app del tenant · planes** | Planes | P3 |
@@ -16,7 +16,55 @@ Los commits y PRs llevan el autor real.
 
 ---
 
-## P1 — _por completar_
+## P1 — Terraform/OpenTofu · Estado y secretos (Jhon Said Andia Merino)
+
+**Tareas:** A1–A7, C1–C7, B7 con P3, arquitectura con P2 y coordinación de entrega.
+C5/RF-06 se conserva como opcional según lo acordado por el equipo.
+
+### Qué hice
+
+| Bloque | Resultado y archivos que defiendo |
+| --- | --- |
+| **A1 — Organización y secretos** | Estructura del monorepo, contratos de integración, `.gitignore` y hook `.githooks/pre-commit`. `scripts/setup-secrets.py` instala Gitleaks oficial con checksum y activa el hook por clon. |
+| **A2 — Cuota y presupuesto** | Cuota regional consultada: 16 vCPU Standard On-Demand en Ohio. `infra/terraform/base/costs.tf` administra el presupuesto mensual opcional; la cuenta del responsable quedó con 10 USD y avisos al superar 80/100 %. El correo está en variables locales. |
+| **A3 — Estado compartido** | `infra/bootstrap/`: S3 cifrado, versionado, acceso público bloqueado, TLS y protección contra eliminación. Claves separadas para bootstrap, base y cada tenant/entorno; bloqueo S3 nativo. |
+| **A4 — SSM/IAM** | Perfiles y políticas de `infra/terraform/tenant/iam.tf`, limitados al prefijo del tenant. P6 genera los SecureString fuera del IaC; P3/P4 los consumen al arrancar. Frontend no puede leer los secretos de backend/DB. |
+| **A5 — Capa compartida** | VPC, subred pública/privada, rutas, SG, endpoints privados SSM/S3, bucket de respaldos/DLM y EC2 de monitoreo desde AMI de P3. Administración por SSM y salida pública de integración. Dashboards y alertas corresponden a P5. |
+| **A6/J1 — Contrato y arquitectura** | `docs/contratos-integracion.md`, `docs/arquitectura-p1.md` y los README de los módulos explican el estado por motor y el flujo de creación. |
+| **A7 — Control de pruebas** | `scripts/test-costs.mjs`: lista, suspende y elimina tenants test por la API, con revisión predeterminada, guardas de entorno y vista previa/confirmación al eliminar. Conserva la coherencia del estado de cada motor. |
+| **B7/C1/C2 — Módulo tenant** | Tres EC2 desde AMIs por rol, SG, IAM, EBS de PostgreSQL, tamaños/límites/respaldos recibidos del plan, etiquetas y outputs de IDs/IP/URL. Contrato coordinado con P2, P3 y P4. |
+| **C3 — Ciclo de energía** | `lifecycle.tf`: detener/arrancar mediante `suspended`, conservar EC2/EBS y recalcular las URLs después del arranque. Se corrigió también en monitoreo el reemplazo indebido por la IP pública al detener. |
+| **C4 — Vista previa** | `infra/terraform/plan_preview.py`: resumen legible/JSON, reemplazos, interrupciones y advertencia de pérdida de datos, respetando campos sensibles. P2/P6 lo integran con las operaciones. |
+| **C6 — OpenTofu** | Mismo HCL y proveedor; `infra/terraform/check_engines.py` comprueba compatibilidad sin mutar el checkout ni migrar el backend compartido. |
+| **C7 — Recuperación y bloqueo** | Estado por tenant, reintento conservando identidad/configuración y `scripts/verify-state-lock.py`, una prueba real de exclusión e idempotencia sobre una clave S3 aislada sin EC2. |
+
+Los permisos administradores de los integrantes fueron una decisión explícita del
+responsable para este laboratorio. Las identidades IAM de las EC2 siguen separadas
+y restringidas; no se presenta el acceso humano como un ejemplo de mínimo privilegio.
+
+### Integración y verificación
+
+- Apoyo inicial a la base de API/worker y resolución de conflictos de integración;
+  el desarrollo actual de P6 y los adaptadores de P2 se atribuyen a sus responsables.
+- Creación desde la web, login de Attendance, suspensión y eliminación reales
+  confirmados por el responsable en su cuenta AWS.
+- Pruebas previas documentadas: 2 de bootstrap, 11 de base y 13 de tenant por motor,
+  además de 14 comprobaciones de la vista previa. Son pruebas con AWS simulado.
+- Cierre del 15/11: ocho pruebas de las guardas del control de costos, listado real
+  de la plataforma, Gitleaks sin hallazgos sobre archivos versionados/nuevos no ignorados,
+  cuota consultada, presupuesto aplicado y bloqueo real S3 con dos procesos.
+- Creación independiente de `p6-check-terraform-mwi1p0zu/test`: tres EC2 y health checks
+  aprobados con Terraform 1.16.6, proveedor 6.69.1 y AMIs 0.2.2. El ciclo adicional de
+  datos y su limpieza quedan pendientes; la instalación de prueba sigue activa.
+- El resultado detallado del ciclo EC2/EBS y los límites de la evidencia se registran
+  en `docs/evidencias-p1.md`; una simulación no se presenta como una prueba real.
+
+### Entrega y video
+
+Manual: `docs/manual/p1-infraestructura.md`. Arquitectura: `docs/arquitectura-p1.md`.
+Guion individual de dos minutos: `docs/video-p1.md`. Se conserva el plan original
+y se anotan avances sin reescribir el reparto. El documento Google de entrega
+se revisó únicamente en lectura; completar nombres y enlace del video corresponde al equipo.
 
 ## P2 — Motores IaC · Adaptador multi-motor · Wizard (GitHub `Arlin-Ab`)
 

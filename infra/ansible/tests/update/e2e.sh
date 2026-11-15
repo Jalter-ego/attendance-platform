@@ -116,7 +116,7 @@ OUT=$(bash "$TH" "${HC[@]}" --url http://127.0.0.1:1/ --timeout 2 | tail -n 1)
 check "sin respuesta del frontend → status 0 y JSON válido" "node -e 'const j=JSON.parse(process.argv[1]); process.exit(j.checks.frontend.status===0?0:1)' '$OUT'"
 
 echo "== 8. boot_backend espera /health (sobre la release activa, con la BD real)"
-BOOT_VARS='{"tenant_id":"colegio-a","env":"test","plan":"basic","institution_name":"Colegio A","timezone":"America/La_Paz","limits":{"max_students":100,"max_teachers":10,"max_courses":20},"db_host":"127.0.0.1","db_password":"e2e-password-0123456789","jwt_secret":"e2e-jwt-secret-0123456789-0123456789-0123456789","ssm_prefix":"/tenants/colegio-a/test"}'
+BOOT_VARS='{"tenant_id":"colegio-a","env":"test","plan":"basic","institution_name":"Colegio A","timezone":"America/La_Paz","limits":{"max_students":100,"max_teachers":10,"max_courses":20},"db_host":"127.0.0.1","db_password":"e2e-password-0123456789","jwt_secret":"e2e-jwt-secret-0123456789-0123456789-0123456789","ssm_prefix":"/tenants/colegio-a/test"}' # gitleaks:allow -- token ficticio exclusivo de esta prueba local
 vm "cd /src/ansible && ANSIBLE_CONFIG=/src/ansible/ansible.cfg ANSIBLE_ROLES_PATH=/src/ansible/roles ansible-playbook /test-src/boot-backend.yml -i /src/ansible/inventory.ini -e '$BOOT_VARS'" > "$WORK/boot.log" 2>&1; RC=$?
 grep -E 'TASK \[boot_backend : Esperar|^ok:|PLAY RECAP|localhost +:' "$WORK/boot.log" | tail -n 3 | sed 's/^/   /'
 check "boot_backend termina con /health 200 (backend.env, migraciones, API)" "[ $RC -eq 0 ] && grep -q 'Esperar /health = 200' '$WORK/boot.log'"
