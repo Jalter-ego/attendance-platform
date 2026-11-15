@@ -36,6 +36,11 @@ resource "aws_instance" "monitoring" {
   vpc_security_group_ids      = [aws_security_group.monitoring.id]
   iam_instance_profile        = aws_iam_instance_profile.monitoring.name
   user_data_replace_on_change = true
+  lifecycle {
+    # EC2 informa false mientras la VM está detenida aunque se solicitó IP pública.
+    # Mantener la asignación inicial sin reemplazar la VM al detenerla por costos.
+    ignore_changes = [associate_public_ip_address]
+  }
   # Sin descargas: los tres servicios ya vienen instalados en Ubuntu/P3.
   user_data = "#cloud-config\n${yamlencode({
     runcmd = [

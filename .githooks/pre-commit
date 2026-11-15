@@ -1,9 +1,18 @@
 #!/bin/sh
 set -eu
 
-if ! command -v gitleaks >/dev/null 2>&1; then
-  echo 'Falta Gitleaks. Instálalo para revisar secretos antes de crear el commit.' >&2
+root=$(git rev-parse --show-toplevel)
+scanner=${GITLEAKS_BIN:-}
+if [ -z "$scanner" ]; then
+  if command -v gitleaks >/dev/null 2>&1; then
+    scanner=gitleaks
+  elif [ -x "$root/.local/tools/gitleaks" ]; then
+    scanner="$root/.local/tools/gitleaks"
+  fi
+fi
+if [ -z "$scanner" ]; then
+  echo 'Falta Gitleaks. Ejecuta python3 scripts/setup-secrets.py desde la raíz del repositorio.' >&2
   exit 1
 fi
 
-exec gitleaks git --staged --redact --no-banner
+exec "$scanner" git --staged --redact --no-banner

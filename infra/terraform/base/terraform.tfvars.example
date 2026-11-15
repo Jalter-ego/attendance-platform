@@ -6,6 +6,13 @@ vpc_cidr     = "10.90.0.0/16"
 # Una IP se escribe con /32. Con [] no hay acceso entrante SSH/Grafana.
 operator_cidrs = []
 
+# Opcional: presupuesto de la cuenta y avisos de gasto real al superar 80/100 %.
+# Si la base compartida ya lo administra, conserva el bloque acordado por el equipo.
+# monthly_budget = {
+#   amount_usd = 10
+#   email      = "responsable@example.com"
+# }
+
 # Opcional: habilita UNA EC2 compartida para Prometheus/Grafana, fuera de los tenants.
 # Copia el ID de ami.monitoring en infra/packer/ami-ids.json (misma cuenta/region).
 # Sin este bloque, monitoring=null y no se crea la instancia.

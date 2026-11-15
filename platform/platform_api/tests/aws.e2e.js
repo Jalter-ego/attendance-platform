@@ -13,13 +13,14 @@ const flags = Object.fromEntries(process.argv.slice(2).map(value => {
 }));
 assert.equal(flags['allow-aws'], true, 'Esta prueba crea/modifica AWS. Requiere --allow-aws.');
 const apiRoot = process.env.PLATFORM_API_URL || 'http://127.0.0.1:4100/api/v1';
-const login = await fetch(`${apiRoot}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', origin: new URL(apiRoot).origin },
+const clientOrigin = process.env.CLIENT_ORIGIN || new URL(apiRoot).origin;
+const login = await fetch(`${apiRoot}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', origin: clientOrigin },
   body: JSON.stringify({ email: process.env.BOOTSTRAP_ADMIN_EMAIL, password: process.env.BOOTSTRAP_ADMIN_PASSWORD }) });
 assert.equal(login.status, 200, 'No se pudo iniciar sesión en la plataforma local.');
 const cookie = login.headers.getSetCookie().find(value => value.startsWith('platform_session=')).split(';')[0];
 async function api(path, body) {
   const response = await fetch(`${apiRoot}${path}`, { method: body === undefined ? 'GET' : 'POST',
-    headers: { cookie, origin: new URL(apiRoot).origin, 'content-type': 'application/json' },
+    headers: { cookie, origin: clientOrigin, 'content-type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json();
   if (!response.ok) throw new Error(`${response.status}: ${data.error?.message || path}`);
