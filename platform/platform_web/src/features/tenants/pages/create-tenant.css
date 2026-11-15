@@ -292,7 +292,8 @@
 }
 
 .wizard-footer {
-  grid-column: 1 / -1;
+  /* Solo bajo la columna principal: el resumen es sticky y, al bajar, tapaba los botones. */
+  grid-column: 1;
   display: flex;
   justify-content: space-between;
   align-items: center;
