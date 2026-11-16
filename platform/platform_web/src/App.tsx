@@ -17,6 +17,7 @@ import { BackupsPage } from './features/backups/pages/BackupsPage';
 import { AuditPage, MonitoringPage } from './features/operations/ActivityPage';
 import { DemoTenantPage, LandingPage } from './features/landing/LandingPage';
 import { PlansPage } from './features/plans/pages/PlansPage';
+import { HomePage } from './features/observability/HomePage';
 import './App.css';
 import './p6.css';
 
@@ -45,10 +46,10 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/" element={<PublicHome />} />
-          <Route path="/inicio" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<LoginPage />} />
           <Route element={<RequireAuth />}>
             <Route element={<PlatformLayout />}>
+              <Route path="/inicio" element={<HomePage />} />
               <Route path="/demo/:id" element={<DemoTenantPage />} />
               <Route path="/tenants" element={<TenantsPage />} />
               <Route element={<RequirePlatformAdmin />}>

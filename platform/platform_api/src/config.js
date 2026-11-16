@@ -69,6 +69,8 @@ const schema = z.object({
   PLATFORM_AMI_FILE: z.string().trim().optional(),
   PLATFORM_WEB_DIST: z.string().trim().optional(),
   PLATFORM_WEBHOOK_TOKEN: z.string().trim().min(24).optional(),
+  PLATFORM_SECURITY_SCANS: boolean.default(false),
+  PLATFORM_SCAN_CORE_REF: z.string().regex(/^[0-9a-f]{40}$/i).optional(),
 });
 
 export function readConfig(env = process.env) {

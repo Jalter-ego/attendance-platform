@@ -5,6 +5,7 @@ import { Icon } from './Icon';
 import './PlatformLayout.css';
 
 const navigation = [
+  { to: '/inicio', label: 'Inicio', icon: 'grid', adminOnly: false },
   { to: '/tenants', label: 'Instituciones', icon: 'building', adminOnly: false },
   { to: '/backups', label: 'Respaldos', icon: 'archive', adminOnly: false },
   { to: '/plans', label: 'Planes', icon: 'layers', adminOnly: true },
@@ -23,7 +24,7 @@ export function PlatformLayout() {
     <div className="platform-shell">
       <a className="platform-skip" href="#panel-content">Ir al contenido</a>
       <aside className="platform-sidebar">
-        <Link className="platform-brand" to="/tenants" aria-label="Attendance, panel principal">
+        <Link className="platform-brand" to="/inicio" aria-label="Attendance, panel principal">
           <Icon name="grid" size={28} />
           <span>Attendance<span>.</span><small>Control Center</small></span>
         </Link>
@@ -47,7 +48,7 @@ export function PlatformLayout() {
             <p>Un lugar para todas<br />tus instituciones.</p>
           </div>
           {mode === 'local' && <span className="platform-local-mode">Modo local · Recursos simulados</span>}
-          <Link className="platform-home-link" to="/">Volver al inicio<Icon name="arrow" size={16} /></Link>
+          <Link className="platform-home-link" to="/">Ir a la portada<Icon name="arrow" size={16} /></Link>
         </div>
       </aside>
 

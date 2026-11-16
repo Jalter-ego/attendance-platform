@@ -32,7 +32,7 @@ import { ENGINES } from './engines/adapter.js';
 import { supportsRealLifecycle } from './engines/lifecycle-capabilities.js';
 import { creationAvailability, createEngineAdapters } from './worker/engines/index.js';
 import { createPlan, deletePlan, getPlan, listPlans, updatePlan } from './modules/plans/plans.service.js';
-import { addAlert, addScan, authorizeService, listAlerts, listScans } from './modules/observability.js';
+import { addScan, authorizeService, listAlerts, listScans, receiveAlerts } from './modules/observability.js';
 import { z } from 'zod';
 import { resolve } from 'node:path';
 
@@ -113,7 +113,7 @@ export function createApp({ pool, config, adapters = config.PLATFORM_DEPLOY_MODE
   );
   api.post('/alerts/webhook', async (request, response) => {
     authorizeService(config, request.get('authorization'));
-    response.status(201).json(await addAlert(pool, request.body));
+    response.status(201).json(await receiveAlerts(pool, request.body));
   });
   api.post('/tenants/:id/security', async (request, response) => {
     authorizeService(config, request.get('authorization'));

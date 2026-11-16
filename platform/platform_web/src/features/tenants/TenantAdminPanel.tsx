@@ -78,7 +78,8 @@ export function TenantAdminPanel({ tenant }: { tenant: Tenant }) {
 }
 
 export function TenantSecurity({ id }: { id: string }) {
-  type Scan = { id: string; scanner: string; status: string; findings: unknown; created_at: string };
+  type Scan = { id: string; scanner: string; status: string; findings: unknown; created_at: string; target?: string; finding_count?: number };
+  const statusLabels: Record<string, string> = { clean: 'Sin hallazgos', findings: 'Con hallazgos', error: 'Error de ejecución' };
   const load = useCallback((signal: AbortSignal) => api<{ scans: Scan[] }>(`/tenants/${encodeURIComponent(id)}/security`, { signal }), [id]);
   const scans = useResource(`security:${id}`, load, 5000);
   return <section className="panel p6-panel">
@@ -87,7 +88,9 @@ export function TenantSecurity({ id }: { id: string }) {
     {scans.loading && <p>Cargando escaneos…</p>}
     {scans.data?.scans.length === 0 && <p>Todavía no hay escaneos registrados.</p>}
     <ul className="p6-list">{scans.data?.scans.map((scan) => <li key={scan.id}>
-      <div><strong>{scan.scanner}</strong><p>{scan.status} · {new Date(scan.created_at).toLocaleString('es-BO')}</p>
+      <div><strong>{scan.scanner}</strong><p>{statusLabels[scan.status] ?? scan.status} · {new Date(scan.created_at).toLocaleString('es-BO')}</p>
+        {scan.target && <p>{scan.target}</p>}
+        {scan.status === 'findings' && scan.finding_count != null && <p>Hallazgos totales: {scan.finding_count}</p>}
         {Array.isArray(scan.findings) && scan.findings.length > 0 && <details><summary>Ver hallazgos</summary>
           <ul>{scan.findings.filter((item): item is string => typeof item === 'string').map((item, index) => <li key={index}>{item}</li>)}</ul>
         </details>}

@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { useResource } from '../../hooks/useResource';
 import { StatusBadge } from '../../components/StatusBadge';
 import { operationLabels } from './types';
+import type { Tenant } from '../tenants/types';
 
 type Entry = { id: string; tenant_id: string | null; env: string | null; action: string; actor: string; status: string; details: string | null; created_at: string };
 type Alert = { id: string; tenant_id: string; tenant_uuid: string; env: string; severity: string; message: string; detected_at: string };
@@ -64,11 +65,58 @@ export function AuditPage() {
 }
 
 const loadAlerts = (signal: AbortSignal) => api<{ alerts: Alert[] }>('/alerts', { signal });
+
+function grafanaUrl(tenant?: Tenant) {
+  const address = import.meta.env.VITE_GRAFANA_URL;
+  if (!address) return undefined;
+  try {
+    const base = new URL(address);
+    if (!['http:', 'https:'].includes(base.protocol)) return undefined;
+    base.pathname = `${base.pathname.replace(/\/$/, '')}/d/attendance-tenants`;
+    if (tenant) {
+      base.searchParams.set('var-tenant', tenant.tenant_id);
+      base.searchParams.set('var-env', tenant.env);
+    }
+    return base.href;
+  } catch {
+    return undefined;
+  }
+}
+
 export function MonitoringPage() {
   const alerts = useResource('alerts', loadAlerts, 5000);
+  const [page, setPage] = useState(0);
+  const loadTenants = useCallback((signal: AbortSignal) => api<{ items: Tenant[]; total: number }>(
+    `/tenants?exclude_deleted=true&limit=${pageSize}&offset=${page * pageSize}`, { signal }), [page]);
+  const tenants = useResource(`monitoring:tenants:${page}`, loadTenants, 5000);
+  const dashboard = grafanaUrl();
   return <>
-    <div className="page-heading"><div><h1>Monitoreo</h1><p>Alertas recibidas por institución.</p></div></div>
+    <div className="page-heading">
+      <div><h1>Monitoreo</h1></div>
+      {dashboard && <a className="button" href={dashboard} target="_blank" rel="noreferrer">Abrir Grafana</a>}
+    </div>
     <section className="panel p6-panel">
+      <h2>Estado de las instituciones</h2>
+      {tenants.error && <p role="alert" className="alert error">{tenants.error}</p>}
+      {tenants.loading && <p>Cargando instituciones…</p>}
+      {tenants.data?.total === 0 && <p>Todavía no hay instituciones registradas.</p>}
+      {!dashboard && <p>El enlace a Grafana aún no está configurado.</p>}
+      <ul className="p6-list">{tenants.data?.items.map((tenant) => {
+        const link = tenant.status === 'ready' ? grafanaUrl(tenant) : undefined;
+        return <li key={tenant.id}>
+          <div><Link className="text-link" to={`/tenants/${tenant.id}`}>{tenant.name}</Link>
+            <p>{showEnv(tenant.env)}</p></div>
+          <StatusBadge status={tenant.status} />
+          {link && <a className="text-link" href={link} target="_blank" rel="noreferrer" aria-label={`Ver ${tenant.name} en Grafana`}>Grafana</a>}
+        </li>;
+      })}</ul>
+      {((tenants.data?.total ?? 0) > pageSize || page > 0) && <div className="p6-actions">
+        <button type="button" className="button" disabled={page === 0} onClick={() => setPage(page - 1)}>Anterior</button>
+        <button type="button" className="button" disabled={(page + 1) * pageSize >= (tenants.data?.total ?? 0)} onClick={() => setPage(page + 1)}>Siguiente</button>
+      </div>}
+    </section>
+    <section className="panel p6-panel">
+      <h2>Alertas recientes</h2>
       {alerts.error && <p role="alert" className="alert error">{alerts.error}</p>}
       {alerts.loading && <p>Cargando alertas…</p>}
       {alerts.data?.alerts.length === 0 && <p>Todavía no hay alertas registradas.</p>}

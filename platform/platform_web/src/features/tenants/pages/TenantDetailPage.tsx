@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { tenantsService } from '../services/tenants.service';
 import { engineNames, planLabel, type TenantDetail } from '../types';
 import { TenantActions } from '../TenantActions';
@@ -32,6 +32,8 @@ function serviceHealth(deployment: TenantDetail['deployments'][number] | undefin
 
 export function TenantDetailPage() {
   const { id = '' } = useParams();
+  const [searchParams] = useSearchParams();
+  const security = searchParams.get('tab') === 'security';
   const { user, mode } = useAuth();
   const engines = useResource('detail:engines', tenantsService.engines);
   const fetcher = useCallback(
@@ -91,8 +93,7 @@ export function TenantDetailPage() {
   const canCreate = data.status === 'draft' && data.creation.available;
   const health = serviceHealth(deployment);
   const isAdmin = user?.role === 'platform_admin';
-  return (
-    <>
+  const heading = <>
       <Link className="back-link" to="/tenants">
         <Icon name="back" size={16} />
         Instituciones
@@ -107,6 +108,17 @@ export function TenantDetailPage() {
         </div>
         <StatusBadge status={data.status} />
       </div>
+      <nav className="p6-actions" aria-label="Vistas de la institución">
+        <Link className="button" to="." aria-current={!security ? 'page' : undefined}>Resumen</Link>
+        <Link className="button" to="?tab=security" aria-current={security ? 'page' : undefined}>Seguridad</Link>
+      </nav>
+  </>;
+
+  if (security) return <>{heading}<TenantSecurity id={id} /></>;
+
+  return (
+    <>
+      {heading}
       {(error || actionError) && (
         <p role="alert" className="alert error">
           {error || actionError}
@@ -245,7 +257,6 @@ export function TenantDetailPage() {
       </section>
       {isAdmin && <TenantActions key={`actions:${id}`} tenant={data} supported={engine?.actions ?? []} busy={pending || busy} onQueued={selectOperation} />}
       {isAdmin && <TenantAdminPanel key={`admins:${id}`} tenant={data} />}
-      <TenantSecurity key={`security:${id}`} id={id} />
       <div className="section-heading">
         <h2>Operaciones</h2>
         <span className="count-label">{data.operations.length}</span>

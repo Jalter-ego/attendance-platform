@@ -1,0 +1,44 @@
+name: attendance-observability
+
+x-demo: &demo
+  image: node:24.15.0-alpine
+  command: ["node", "/demo.mjs"]
+  volumes:
+    - ./local/demo.mjs:/demo.mjs:ro
+
+services:
+  demo-a:
+    <<: *demo
+  demo-b:
+    <<: *demo
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./.local/prometheus.json:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+  grafana:
+    image: grafana/grafana:13.3.0
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_SCRAPE_INTERVAL: 5s
+      PLATFORM_ALERT_WEBHOOK_URL: ${PLATFORM_ALERT_WEBHOOK_URL:-http://host.docker.internal:5001/api/v1/alerts/webhook}
+      PLATFORM_WEBHOOK_TOKEN: ${PLATFORM_WEBHOOK_TOKEN:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/attendance/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana_data:

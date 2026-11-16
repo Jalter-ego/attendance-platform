@@ -1,0 +1,416 @@
+{
+  "uid": "attendance-tenants",
+  "title": "Observabilidad por institución",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "label": "Institución",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "attendance-prometheus"
+        },
+        "definition": "label_values(up{job=\"node\"}, tenant)",
+        "query": {
+          "query": "label_values(up{job=\"node\"}, tenant)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "name": "env",
+        "label": "Entorno",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "attendance-prometheus"
+        },
+        "definition": "label_values(up{job=\"node\",tenant=~\"${tenant:regex}\"}, env)",
+        "query": {
+          "query": "label_values(up{job=\"node\",tenant=~\"${tenant:regex}\"}, env)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Disponibilidad de scrape por servidor",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "description": "Respuesta de los endpoints de métricas. 1 = responde, 0 = scrape fallido.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=~\"node|attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}",
+          "legendFormat": "{{role}} · {{job}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Proceso PostgreSQL",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "description": "Proceso postgres detectado por Process Exporter en el servidor de base de datos.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "namedprocess_namegroup_num_procs{job=\"process\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\",role=\"db\",groupname=\"postgres\"} or on (tenant, env, role, instance) (0 * (up{job=\"process\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\",role=\"db\"} == 1))",
+          "legendFormat": "{{role}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "CPU utilizada",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - avg by (role, instance) (rate(node_cpu_seconds_total{job=\"node\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\",mode=\"idle\"}[$__rate_interval])))",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Memoria utilizada",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes{job=\"node\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"} / node_memory_MemTotal_bytes{job=\"node\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"})",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Espacio utilizado en disco",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{job=\"node\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\",mountpoint=~\"/|/var/lib/postgresql\"} / node_filesystem_size_bytes{job=\"node\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\",mountpoint=~\"/|/var/lib/postgresql\"})",
+          "legendFormat": "{{role}} · {{mountpoint}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Peticiones por segundo",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method, route) (rate(http_requests_total{job=\"attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{method}} {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Errores HTTP 5xx",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (sum(rate(http_requests_total{job=\"attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\",status=~\"5..\"}[$__rate_interval])) or 0 * sum(rate(http_requests_total{job=\"attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}[$__rate_interval]))) / clamp_min(sum(rate(http_requests_total{job=\"attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "Backend"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Latencia p95 por ruta",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, method, route) (rate(http_request_duration_seconds_bucket{job=\"attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}[$__rate_interval])))",
+          "legendFormat": "{{method}} {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Retraso del event loop",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nodejs_eventloop_lag_seconds{job=\"attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Heap de Node en uso",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nodejs_heap_size_used_bytes{job=\"attendance-core\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Series recibidas de OpenTelemetry",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "scrape_samples_scraped{job=\"otel\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Series recibidas de Netdata",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "attendance-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "scrape_samples_scraped{job=\"netdata\",tenant=~\"${tenant:regex}\",env=~\"${env:regex}\"}",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    }
+  ]
+}
