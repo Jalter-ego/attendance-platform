@@ -7,6 +7,7 @@ import { CommandError } from './services/command-runner.js';
 import { OperationCancelled, OperationError, LeaseLost } from './errors.js';
 import { isLifecycle, isLocalBackup, persistLifecycle, runLifecycle } from './services/lifecycle.js';
 import { runCreateOperation } from './handlers/create.handler.js';
+import { scanBeforeCreate } from './services/security-scans.js';
 import { createEngineAdapters } from './engines/index.js';
 import { finishCreation, recoverLegacyTransition } from '../modules/deployments/deployments.service.js';
 import {
@@ -127,6 +128,10 @@ export async function runOnce(
       await appendEvent(client, operation.id, level, message, stage === null ? null : redact(stage).slice(0, 100));
     });
   try {
+    if (operation.type === 'create' && config?.PLATFORM_SECURITY_SCANS &&
+      (!isSnapshotCreate(operation) || config.PLATFORM_DEPLOY_MODE === 'integration')) {
+      await scanBeforeCreate({ pool, config, operation, workerId, report, signal: jobSignal });
+    }
     if (operation.type === 'diagnostic') {
       for (const [progress, stage, message] of steps) {
         jobSignal.throwIfAborted();

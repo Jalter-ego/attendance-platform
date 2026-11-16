@@ -44,6 +44,47 @@ export async function addAlert(pool, input) {
   return result.rows[0];
 }
 
+const grafanaNotification = z.object({
+  alerts: z.array(z.object({
+    status: z.string(),
+    fingerprint: z.string().regex(/^[0-9a-f]{8,64}$/i),
+    startsAt: z.iso.datetime({ offset: true }),
+    labels: z.record(z.string(), z.string()),
+    annotations: z.record(z.string(), z.string()).optional(),
+  })).max(1000),
+});
+
+export async function receiveAlerts(pool, input) {
+  if (!input || !Object.hasOwn(input, 'alerts')) return addAlert(pool, input);
+
+  const { alerts } = grafanaNotification.parse(input);
+  const events = alerts
+    .filter(({ status, labels }) => status === 'firing'
+      && /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(labels.tenant ?? '')
+      && ['test', 'prod'].includes(labels.env))
+    .map(({ labels, annotations, fingerprint, startsAt }) => ({
+      tenant_id: labels.tenant,
+      env: labels.env,
+      severity: ['critical', 'warning', 'info'].includes(labels.severity) ? labels.severity : 'warning',
+      message: redact(annotations?.summary || labels.alertname || 'Alerta de Grafana').slice(0, 1000),
+      detected_at: startsAt,
+      source_event: `grafana:${fingerprint}:${new Date(startsAt).toISOString()}`,
+    }));
+  if (!events.length) return { received: 0 };
+
+  const result = await pool.query(
+    `INSERT INTO platform_alerts(tenant_id,severity,message,detected_at,source_event)
+     SELECT t.id,e.severity,e.message,e.detected_at,e.source_event
+     FROM jsonb_to_recordset($1::jsonb)
+       AS e(tenant_id text, env text, severity text, message text, detected_at timestamptz, source_event text)
+     JOIN tenants t ON t.tenant_id=e.tenant_id AND t.env=e.env
+     WHERE t.status NOT IN ('suspending','suspended','deleting','deleted')
+     ON CONFLICT (tenant_id, source_event) DO NOTHING`,
+    [JSON.stringify(events)],
+  );
+  return { received: result.rowCount };
+}
+
 export async function addScan(pool, id, input) {
   const data = z.object({
     scanner: z.string().trim().min(1).max(60), status: z.string().trim().min(1).max(40),

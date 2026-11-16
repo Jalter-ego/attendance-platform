@@ -11,7 +11,7 @@ Los commits y PRs llevan el autor real.
 | P2 | GitHub `Arlin-Ab` | **Motores IaC: EngineAdapter, Terraform/OpenTofu, Pulumi, CloudFormation** | Crear tenant (wizard), panel Infraestructura | P1 |
 | P3 | jorge (GitHub `Gatu-1548`) | **Packer · cloud-init · Respaldos** | Respaldos | P4 |
 | P4 | Marcelo (GitHub `MarceloCamachh`) | **Ansible · app del tenant · planes** | Planes | P3 |
-| P5 | _por completar_ | Observabilidad · escáneres de seguridad | Inicio, Monitoreo, Seguridad | P6 |
+| P5 | Fabiana | Observabilidad · escáneres de seguridad | Inicio, Monitoreo, Seguridad | P6 |
 | P6 | Sebastián (GitHub `Sebastian-M-C`) | Plataforma: API · worker · auditoría | Login, shell, Tenants, progreso y logs; integración del panel | P5 |
 
 ---
@@ -246,7 +246,30 @@ Errores encontrados y corregidos:
 3. **Planes con versiones (RF-04):** por qué editar un plan no toca los tenants existentes (la copia del plan evita recrear sus EC2), y la pantalla Planes.
 4. **Aislamiento:** las 5 pruebas con su control positivo, la fuga provocada que el script detecta y la segunda barrera del core (el token se valida contra **su** base).
 
-## P5 — _por completar_
+## P5 — Observabilidad · Escáneres de seguridad (Fabiana)
+
+**Tareas del plan:** G1–G9, J3, apoyo a J5 y sección individual J8.
+
+### Qué hice
+
+| Tarea | Resultado y archivos que defiendo |
+| --- | --- |
+| **G1 — Descubrimiento en Prometheus** | `observability/prometheus/config.mjs` descubre instancias EC2 activas y convierte sus etiquetas en `tenant`, `env` y `role`. Usa los exporters de las AMIs y el endpoint `/core/api/v1/metrics` del backend de Attendance Core. |
+| **G2/G3/G7 — Grafana y métricas** | `observability/grafana/` aprovisiona la fuente Prometheus y el tablero JSON por tenant y entorno. Incluye disponibilidad, CPU, memoria, disco, proceso de PostgreSQL, latencia, errores, peticiones, event loop, heap y series de OpenTelemetry y Netdata. |
+| **G4/G5 — Alertas** | Cinco reglas cubren endpoint caído, errores HTTP 5xx, CPU, memoria y disco. `platform/platform_api/src/modules/observability.js` recibe el webhook de Grafana, asigna los eventos al tenant y entorno y evita duplicados. |
+| **G6 — Escáneres** | `observability/scanners/suite.mjs` ejecuta Checkov sobre IaC, Trivy sobre dependencias de Core y Gitleaks sobre el código. El worker registra estados y hallazgos por tenant y operación de creación en `platform/platform_api/src/worker/services/security-scans.js`. |
+| **G8 — Panel** | Inicio, Monitoreo para el administrador de plataforma con enlace filtrado a Grafana, y pestaña Seguridad en el detalle del tenant. El acceso a los escaneos reutiliza los permisos de la plataforma. |
+| **G9/J3 — Alerta de ejemplo y entrega** | El [tablero JSON](observability/grafana/dashboards/tenants.json) está versionado. La [guía de P5](observability/README.md) documenta el despliegue local, la instalación en AWS y la prueba controlada de la alerta 5xx. |
+
+### Cómo lo verifiqué
+
+- **Local:** configuración validada con `promtool`, 27 objetivos activos con dos tenants simulados y recepción de una alerta 5xx. Para el aporte a J5, confirmé que el administrador de `demo-a` solo recibía sus alertas y obtenía `404` al consultar los escaneos de `demo-b`.
+- **AWS:** aprovisioné `demo-a/test` con Terraform. Prometheus descubrió sus tres roles con 13 objetivos activos, Grafana evaluó la alerta 5xx de la prueba controlada y la API la guardó para ese tenant. En Seguridad se comprobaron los tres resultados de escaneo.
+
+### Entrega y video
+
+- Demostración desde el panel con Colegio Británico en Pruebas. En código, explico el descubrimiento EC2, el etiquetado de Prometheus y el registro de los escaneos por operación.
+- Queda por enlazar el PR y adjuntar las capturas del tablero y la alerta para completar la evidencia de J3.
 
 ## P6 — Sebastián: plataforma local y aprovisionamiento integrado
 
